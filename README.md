@@ -22,6 +22,14 @@ Start the complete demo with one command:
 make live
 ```
 
+Run the Paradise wildfire swarm with the analytic backend (no CORE/EMANE required):
+
+```bash
+make wildfire
+```
+
+Use `make wildfire-live` to start both the wildfire simulator and frontend. Both targets accept `HOST=0.0.0.0` for the existing trusted-LAN profile.
+
 This runs the simulator/WebSocket service and Vite together. To run them in separate terminals instead, start the simulator in terminal 1:
 
 ```bash
@@ -77,6 +85,7 @@ tail -f output/isr-demo.cot
 
 - `GET http://127.0.0.1:9000/healthz` — process health.
 - `GET http://127.0.0.1:9000/api/v1/snapshot` — latest complete state envelope.
+- `GET http://127.0.0.1:9000/api/v1/scenarios` — registered chooseable scenarios.
 - `ws://127.0.0.1:9000/api/v1/stream` — `hello`, immediate current `state`, then one complete `state` per simulation tick.
 
 The stable `autonomy-sim/v1` message schema, enum values, units, ordering, and CZML projection are defined in [ARCHITECTURE.md](ARCHITECTURE.md). State frames make entities, Ditto peer identities, document replicas, replication events, current carrier links, traffic aggregates, and CZML explicit.
@@ -104,7 +113,7 @@ network_backend = "analytic"
 [[nodes]]
 id = "uav-one"
 name = "UAV One"
-kind = "drone"
+kind = "uas"
 domain = "air"
 position = { lat_deg = 34.0, lon_deg = -117.0, alt_m = 200.0 }
 
@@ -124,7 +133,7 @@ waypoints = [
 ]
 ```
 
-Kinds are `drone`, `person`, `ground_vehicle`, `ground_station`, and `sensor`; domains are `ground`, `air`, `maritime`, and `space`. Radios use `mesh`, `cellular`, `satcom`, or `ble`. Playbooks are `hold`, `area_search`, `persistent_surveillance`, and `comms_relay`. Invalid scenarios fail before the server binds.
+Registered scenario names can be passed without a path, for example `cargo run -- --scenario wildfire-paradise`. Kinds are `uas`, `air_tanker`, `rotary`, `person`, `ground_vehicle`, `base`, `fire`, `waypoint`, `threat_uas`, `radar_sensor`, `ew_jammer`, `interceptor`, `gun_system`, and `protected_site`; domains are `ground`, `air`, `maritime`, and `space`. Radios use `mesh`, `cellular`, `satcom`, or `ble`. Standard playbooks are `hold`, `area_search`, `persistent_surveillance`, and `comms_relay`; the `wildfire` builder adds `firefighting`. Invalid scenarios fail before the server binds.
 
 Run another scenario or override the API address directly:
 
