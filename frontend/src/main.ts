@@ -812,9 +812,12 @@ function clearDynamicVisuals(): void {
   lastSequence = -1;
 }
 
-function setScenarioHeading(scenario: string): void {
-  byId('scenarioName').textContent = scenario.toUpperCase();
-  const matching = scenarios.find((item) => item.id === scenario || item.name === scenario);
+function setScenarioHeading(scenarioId: string): void {
+  const matching = scenarios.find((item) => item.id === scenarioId);
+  byId('scenarioName').textContent = (matching?.name || scenarioId).toUpperCase();
+  const description = byId<HTMLElement>('scenarioDescription');
+  description.textContent = matching?.description || '';
+  description.title = matching?.description || '';
   if (matching) {
     selectedScenario = matching;
     byId<HTMLSelectElement>('scenarioSelect').value = matching.id;
@@ -892,10 +895,9 @@ function apiBaseUrl(): URL {
 
 function streamUrl(scenario: ScenarioSummary | null = selectedScenario): string {
   const configuredWebSocket = import.meta.env.VITE_WS_URL as string | undefined;
-  const endpoint = scenario?.stream_url || configuredWebSocket;
-  const url = endpoint ? new URL(endpoint, apiBaseUrl()) : apiBaseUrl();
+  const url = configuredWebSocket ? new URL(configuredWebSocket, apiBaseUrl()) : apiBaseUrl();
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-  if (!endpoint) {
+  if (!configuredWebSocket) {
     url.pathname = '/api/v1/stream';
     url.search = '';
   }
@@ -914,22 +916,18 @@ function scenariosUrl(): string {
 
 function normalizeScenario(value: unknown): ScenarioSummary | null {
   if (typeof value === 'string' && value.trim()) {
-    return { id: value, name: value };
+    return { id: value, name: value, description: '', entity_count: 0, default: false };
   }
   if (!value || typeof value !== 'object') return null;
   const record = value as Record<string, unknown>;
-  const id = String(record.id || record.slug || record.scenario || record.name || '').trim();
+  const id = typeof record.id === 'string' ? record.id.trim() : '';
   if (!id) return null;
   return {
     id,
-    name: String(record.display_name || record.title || record.name || id),
-    description: typeof record.description === 'string' ? record.description : undefined,
-    entity_count: typeof record.entity_count === 'number' ? record.entity_count : undefined,
-    default: typeof record.default === 'boolean' ? record.default : undefined,
-    builder: typeof record.builder === 'string' ? record.builder : undefined,
-    stream_url: typeof record.stream_url === 'string'
-      ? record.stream_url
-      : typeof record.ws_url === 'string' ? record.ws_url : undefined,
+    name: typeof record.name === 'string' && record.name.trim() ? record.name : id,
+    description: typeof record.description === 'string' ? record.description : '',
+    entity_count: typeof record.entity_count === 'number' ? record.entity_count : 0,
+    default: typeof record.default === 'boolean' ? record.default : false,
   };
 }
 
@@ -963,7 +961,7 @@ async function loadScenarios(): Promise<void> {
       || scenarios[0];
     select.value = selectedScenario.id;
     select.disabled = false;
-    setScenarioHeading(selectedScenario.name);
+    setScenarioHeading(selectedScenario.id);
   } catch (error) {
     console.warn('Scenario discovery unavailable; connecting to the server default', error);
     scenarios = [];
@@ -972,6 +970,7 @@ async function loadScenarios(): Promise<void> {
     option.textContent = 'SERVER DEFAULT';
     select.replaceChildren(option);
     select.disabled = true;
+    byId('scenarioDescription').textContent = 'Scenario catalog unavailable';
   }
 }
 
@@ -1010,7 +1009,7 @@ byId<HTMLSelectElement>('scenarioSelect').addEventListener('change', (event) => 
   const nextScenario = scenarios.find((scenario) => scenario.id === scenarioId);
   if (!nextScenario || nextScenario.id === selectedScenario?.id) return;
   selectedScenario = nextScenario;
-  setScenarioHeading(nextScenario.name);
+  setScenarioHeading(nextScenario.id);
   clearDynamicVisuals();
   connect();
 });

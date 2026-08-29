@@ -110,11 +110,9 @@ export interface HelloEnvelope {
 export interface ScenarioSummary {
   id: string;
   name: string;
-  description?: string;
-  entity_count?: number;
-  default?: boolean;
-  builder?: string;
-  stream_url?: string;
+  description: string;
+  entity_count: number;
+  default: boolean;
 }
 
 export interface ScenarioListResponse {

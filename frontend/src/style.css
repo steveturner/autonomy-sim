@@ -62,6 +62,7 @@ button { font: inherit; }
 .eyebrow, .hud-title, .metric span { display: block; color: #76909e; font: 500 10px/1.2 'IBM Plex Mono', monospace; letter-spacing: .16em; }
 .scenario-control { display: flex; align-items: center; gap: 9px; margin-top: 3px; }
 .mission strong { max-width: 210px; overflow: hidden; font: 600 12px/1.3 'IBM Plex Mono', monospace; letter-spacing: .07em; text-overflow: ellipsis; white-space: nowrap; }
+.scenario-description { display: block; max-width: 430px; margin: 2px auto 0; overflow: hidden; color: #6f8d9b; font: 500 9px/1.1 'IBM Plex Mono', monospace; text-overflow: ellipsis; white-space: nowrap; }
 .scenario-control select { max-width: 190px; min-width: 120px; padding: 5px 25px 5px 8px; color: #d8f6ff; background: #07141c; border: 1px solid rgba(103, 232, 249, .28); border-radius: 0; cursor: pointer; font: 600 10px 'IBM Plex Mono', monospace; letter-spacing: .04em; text-transform: uppercase; }
 .scenario-control select:focus-visible { outline: 2px solid #67e8f9; outline-offset: 2px; }
 .scenario-control select:disabled { color: #6b8794; cursor: wait; }
@@ -133,7 +134,7 @@ button { font: inherit; }
 
 @media (max-width: 760px) {
   .topbar { grid-template-columns: auto 1fr auto; gap: 10px; padding: 0 12px; }
-  .brand > span:last-child, .mission strong { display: none; }
+  .brand > span:last-child, .mission strong, .scenario-description { display: none; }
   .scenario-control select { width: min(36vw, 170px); min-width: 0; }
   .hud { top: 76px; }
   .hud-left { left: 12px; width: 180px; }
