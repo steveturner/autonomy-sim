@@ -11,5 +11,8 @@
   "devDependencies": {
     "typescript": "^5.9.2",
     "vite": "^7.1.3"
+  },
+  "dependencies": {
+    "milsymbol": "^3.0.4"
   }
 }

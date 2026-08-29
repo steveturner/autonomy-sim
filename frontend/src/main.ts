@@ -1,5 +1,15 @@
 import './style.css';
-import type { EntityState, HelloEnvelope, LinkEvent, LinkState, LinkType, StateEnvelope, TrafficState } from './types';
+import milsymbol from 'milsymbol';
+import type {
+  EntityEffectState,
+  EntityState,
+  HelloEnvelope,
+  LinkEvent,
+  LinkState,
+  LinkType,
+  StateEnvelope,
+  TrafficState,
+} from './types';
 
 declare const Cesium: any;
 
@@ -83,12 +93,19 @@ async function configureGlobe(): Promise<void> {
 
 void configureGlobe();
 
-const entityVisuals = new Map<string, { marker: any; trail: any; history: number[] }>();
+const entityVisuals = new Map<string, {
+  marker: any;
+  trail: any;
+  history: number[];
+  symbolKey: string;
+}>();
+const effectVisuals = new Map<string, { entity: any; visualKind: 'area' | 'ring' | 'line' }>();
 const linkVisuals = new Map<string, any>();
 const svgLinkVisuals = new Map<string, {
   line: SVGLineElement; source: string; target: string; linkType: LinkType;
 }>();
 const entityPositions = new Map<string, EntityState['position']>();
+const symbolImages = new Map<string, { image: HTMLCanvasElement; width: number; height: number }>();
 let hasFramed = false;
 let googleTiles: any = null;
 let reconnectTimer = 0;
@@ -115,23 +132,76 @@ function byId<T extends Element>(id: string): T {
   return node as unknown as T;
 }
 
-function iconFor(entity: EntityState): string {
-  switch (entity.kind) {
-    case 'drone': return '▲';
-    case 'person': return '●';
-    case 'ground_vehicle': return '◆';
-    case 'ground_station': return '■';
-    case 'sensor': return '◇';
-  }
+function normalizedAffiliation(entity: EntityState): 'friendly' | 'hostile' | 'neutral' | 'unknown' {
+  const value = String(entity.affiliation || '').toLowerCase();
+  if (value === 'friendly' || value === 'friend' || value === 'f') return 'friendly';
+  if (value === 'hostile' || value === 'h') return 'hostile';
+  if (value === 'neutral' || value === 'n') return 'neutral';
+  if (entity.kind === 'threat_uas') return 'hostile';
+  return entity.sidc ? 'unknown' : 'friendly';
 }
 
-function colorFor(entity: EntityState): any {
-  switch (entity.domain) {
-    case 'air': return Cesium.Color.fromCssColorString('#41bfff');
-    case 'ground': return Cesium.Color.fromCssColorString('#4ce69a');
-    case 'maritime': return Cesium.Color.fromCssColorString('#3b82f6');
-    case 'space': return Cesium.Color.fromCssColorString('#ffca3a');
+function affiliationColor(entity: EntityState): any {
+  const colors: Record<ReturnType<typeof normalizedAffiliation>, string> = {
+    friendly: '#38bdf8',
+    hostile: '#fb4f5f',
+    neutral: '#4ade80',
+    unknown: '#facc15',
+  };
+  return Cesium.Color.fromCssColorString(colors[normalizedAffiliation(entity)]);
+}
+
+function fallbackSidc(entity: EntityState): string {
+  const affiliationCode: Record<ReturnType<typeof normalizedAffiliation>, string> = {
+    friendly: 'F', hostile: 'H', neutral: 'N', unknown: 'U',
+  };
+  const affiliation = affiliationCode[normalizedAffiliation(entity)];
+  if (entity.domain === 'air' || entity.kind === 'drone' || entity.kind === 'threat_uas') {
+    return `S${affiliation}APMFQ--------`;
   }
+  if (entity.kind === 'person') return `S${affiliation}GPUCI--------`;
+  return `S${affiliation}GPU----------`;
+}
+
+function symbolFor(entity: EntityState): {
+  key: string;
+  image: HTMLCanvasElement;
+  width: number;
+  height: number;
+} {
+  const sidc = entity.sidc?.trim() || fallbackSidc(entity);
+  const key = sidc.toUpperCase();
+  let cached = symbolImages.get(key);
+  if (!cached) {
+    try {
+      const image = new milsymbol.Symbol(sidc, {
+        size: 36,
+        padding: 2,
+        infoFields: false,
+        standard: '2525',
+      }).asCanvas(2);
+      const maxDimension = Math.max(image.width, image.height, 1);
+      cached = {
+        image,
+        width: Math.max(24, Math.round((image.width / maxDimension) * 50)),
+        height: Math.max(24, Math.round((image.height / maxDimension) * 50)),
+      };
+    } catch (error) {
+      console.warn(`Unable to render SIDC ${sidc}; using a generic symbol`, error);
+      const image = new milsymbol.Symbol('SUGPU----------', { size: 36, padding: 2 }).asCanvas(2);
+      cached = { image, width: 42, height: 42 };
+    }
+    symbolImages.set(key, cached);
+  }
+  return { key, ...cached };
+}
+
+function compactLabel(entity: EntityState): string {
+  const callsign = entity.callsign?.trim() || entity.name;
+  const missionState = entity.mission_state?.trim()
+    || entity.mission.active_node
+    || entity.mission.status;
+  return `${callsign} · ${missionState}`;
 }
 
 function updateEntities(entities: EntityState[]): void {
@@ -140,39 +210,46 @@ function updateEntities(entities: EntityState[]): void {
     current.add(entity.id);
     entityPositions.set(entity.id, entity.position);
     const cartesian = Cesium.Cartesian3.fromDegrees(entity.position.lon_deg, entity.position.lat_deg, entity.position.alt_m);
+    const symbol = symbolFor(entity);
+    const heading = -Cesium.Math.toRadians(entity.kinematics.heading_deg);
     const existing = entityVisuals.get(entity.id);
     if (existing) {
       existing.marker.position = cartesian;
-      existing.marker.orientation = Cesium.Transforms.headingPitchRollQuaternion(
-        cartesian,
-        new Cesium.HeadingPitchRoll(Cesium.Math.toRadians(entity.kinematics.heading_deg), 0, 0),
-      );
+      existing.marker.billboard.rotation = heading;
+      existing.marker.label.text = compactLabel(entity);
       existing.marker.description = description(entity);
+      if (existing.symbolKey !== symbol.key) {
+        existing.marker.billboard.image = symbol.image;
+        existing.marker.billboard.width = symbol.width;
+        existing.marker.billboard.height = symbol.height;
+        existing.symbolKey = symbol.key;
+      }
       existing.history.push(entity.position.lon_deg, entity.position.lat_deg, entity.position.alt_m);
       if (existing.history.length > 270) existing.history.splice(0, 3);
       existing.trail.polyline.positions = Cesium.Cartesian3.fromDegreesArrayHeights(existing.history);
       continue;
     }
-    const color = colorFor(entity);
+    const color = affiliationColor(entity);
     const marker = viewer.entities.add({
       id: `entity/${entity.id}`,
       name: entity.name,
       position: cartesian,
-      point: {
-        pixelSize: entity.kind === 'person' ? 9 : 13,
-        color,
-        outlineColor: Cesium.Color.WHITE.withAlpha(0.9),
-        outlineWidth: 1.5,
+      billboard: {
+        image: symbol.image,
+        width: symbol.width,
+        height: symbol.height,
+        rotation: heading,
+        alignedAxis: Cesium.Cartesian3.ZERO,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
       },
       label: {
-        text: `${iconFor(entity)}  ${entity.name}`,
-        font: '600 13px IBM Plex Mono, monospace',
+        text: compactLabel(entity),
+        font: '600 12px IBM Plex Mono, monospace',
         fillColor: Cesium.Color.WHITE,
         outlineColor: Cesium.Color.BLACK,
         outlineWidth: 3,
         style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-        pixelOffset: new Cesium.Cartesian2(0, -25),
+        pixelOffset: new Cesium.Cartesian2(0, -34),
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
       },
       description: description(entity),
@@ -182,7 +259,7 @@ function updateEntities(entities: EntityState[]): void {
       id: `track/${entity.id}`,
       polyline: { positions: [cartesian], width: 1.5, material: color.withAlpha(0.48) },
     });
-    entityVisuals.set(entity.id, { marker, trail, history });
+    entityVisuals.set(entity.id, { marker, trail, history, symbolKey: symbol.key });
   }
   for (const [id, visual] of entityVisuals) {
     if (!current.has(id)) {
@@ -196,12 +273,231 @@ function updateEntities(entities: EntityState[]): void {
 
 function description(entity: EntityState): string {
   return `<table class="cesium-infoBox-defaultTable"><tbody>
-    <tr><th>Type</th><td>${entity.kind} / ${entity.domain}</td></tr>
-    <tr><th>Mission</th><td>${entity.mission.playbook}</td></tr>
-    <tr><th>Active node</th><td>${entity.mission.active_node}</td></tr>
+    <tr><th>Callsign</th><td>${escapeHtml(entity.callsign || entity.name)}</td></tr>
+    <tr><th>SIDC</th><td>${escapeHtml(entity.sidc || 'legacy fallback')}</td></tr>
+    <tr><th>Affiliation</th><td>${escapeHtml(normalizedAffiliation(entity))}</td></tr>
+    <tr><th>Type</th><td>${escapeHtml(entity.kind)} / ${escapeHtml(entity.domain)}</td></tr>
+    <tr><th>Mission</th><td>${escapeHtml(entity.mission.playbook)}</td></tr>
+    <tr><th>Active node</th><td>${escapeHtml(entity.mission_state || entity.mission.active_node)}</td></tr>
     <tr><th>Speed</th><td>${entity.kinematics.speed_mps.toFixed(1)} m/s</td></tr>
     <tr><th>Altitude</th><td>${entity.position.alt_m.toFixed(0)} m</td></tr>
   </tbody></table>`;
+}
+
+function escapeHtml(value: unknown): string {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+interface EffectVisualSpec {
+  id: string;
+  visualKind: 'area' | 'ring' | 'line';
+  name: string;
+  position: EntityState['position'];
+  target?: EntityState['position'];
+  radiusM: number;
+  color: any;
+}
+
+function numberValue(...values: unknown[]): number | undefined {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+  }
+  return undefined;
+}
+
+function normalizedIntensity(value: unknown): number {
+  const numeric = numberValue(value) ?? 0.5;
+  return Cesium.Math.clamp(numeric > 1 ? numeric / 100 : numeric, 0, 1);
+}
+
+function effectMatches(effect: EntityEffectState, terms: string[]): boolean {
+  const kind = effect.kind.toLowerCase();
+  return terms.some((term) => kind.includes(term));
+}
+
+function isActive(entity: EntityState, effect?: EntityEffectState): boolean {
+  if (effect?.active !== undefined) return effect.active;
+  if (entity.active !== undefined) return entity.active;
+  return entity.mission.status === 'running';
+}
+
+function collectEffectSpecs(entities: EntityState[], wireEffects: EntityEffectState[]): EffectVisualSpec[] {
+  const specs: EffectVisualSpec[] = [];
+  const byEntityId = new Map(entities.map((entity) => [entity.id, entity]));
+  const positionFor = (id: string | undefined, fallback?: EntityState['position']) => (
+    (id && byEntityId.get(id)?.position) || fallback
+  );
+
+  for (const entity of entities) {
+    const nestedEffects = entity.effects || [];
+    if (entity.kind === 'fire') {
+      const intensity = normalizedIntensity(entity.intensity);
+      const color = Cesium.Color.lerp(
+        Cesium.Color.fromCssColorString('#fbbf24'),
+        Cesium.Color.fromCssColorString('#ef233c'),
+        intensity,
+        new Cesium.Color(),
+      );
+      specs.push({
+        id: `effect/entity/${entity.id}/fire`,
+        visualKind: 'area',
+        name: `FIRE CELL / ${entity.name}`,
+        position: entity.position,
+        radiusM: numberValue(entity.effect_radius_m, entity.radius_m) ?? 70 + intensity * 280,
+        color,
+      });
+    }
+
+    if (entity.kind === 'base' || entity.kind === 'protected_site') {
+      specs.push({
+        id: `effect/entity/${entity.id}/site`,
+        visualKind: 'ring',
+        name: `${entity.kind.toUpperCase()} / ${entity.name}`,
+        position: entity.position,
+        radiusM: numberValue(entity.effect_radius_m, entity.radius_m) ?? 85,
+        color: affiliationColor(entity),
+      });
+    }
+
+    const jammerEffect = nestedEffects.find((effect) => effectMatches(effect, ['jam', 'electronic_warfare', 'ew_']));
+    if ((entity.kind === 'ew_jammer' || entity.kind === 'jammer' || jammerEffect) && isActive(entity, jammerEffect)) {
+      specs.push({
+        id: `effect/entity/${entity.id}/jammer`,
+        visualKind: 'ring',
+        name: `EW JAMMING / ${entity.name}`,
+        position: entity.position,
+        radiusM: numberValue(jammerEffect?.radius_m, entity.effect_radius_m, entity.radius_m) ?? 850,
+        color: Cesium.Color.fromCssColorString('#c084fc'),
+      });
+    }
+
+    const engagement = nestedEffects.find((effect) => effectMatches(effect, ['engage', 'intercept', 'gun']));
+    const targetId = engagement?.target_entity_id || entity.engagement_target_id || entity.target_id;
+    if ((entity.kind === 'interceptor' || entity.kind === 'gun_system' || engagement) && isActive(entity, engagement)) {
+      const target = positionFor(targetId);
+      specs.push({
+        id: `effect/entity/${entity.id}/engagement`,
+        visualKind: target ? 'line' : 'ring',
+        name: `ENGAGEMENT / ${entity.name}${targetId ? ` → ${targetId}` : ''}`,
+        position: entity.position,
+        target,
+        radiusM: numberValue(engagement?.radius_m, entity.effect_radius_m, entity.radius_m) ?? 180,
+        color: Cesium.Color.fromCssColorString(entity.kind === 'gun_system' ? '#fb923c' : '#f43f5e'),
+      });
+    }
+  }
+
+  wireEffects.forEach((effect, index) => {
+    if (effect.active === false) return;
+    const position = positionFor(effect.source_entity_id, effect.position);
+    if (!position) return;
+    const key = effect.id || `${effect.kind}/${effect.source_entity_id || index}`;
+    if (effectMatches(effect, ['fire'])) {
+      const intensity = normalizedIntensity(effect.intensity);
+      specs.push({
+        id: `effect/wire/${key}`,
+        visualKind: 'area',
+        name: effect.kind.toUpperCase(),
+        position,
+        radiusM: effect.radius_m ?? 70 + intensity * 280,
+        color: Cesium.Color.lerp(Cesium.Color.YELLOW, Cesium.Color.RED, intensity, new Cesium.Color()),
+      });
+    } else if (effectMatches(effect, ['jam', 'electronic_warfare', 'ew_'])) {
+      specs.push({
+        id: `effect/wire/${key}`,
+        visualKind: 'ring',
+        name: effect.kind.toUpperCase(),
+        position,
+        radiusM: effect.radius_m ?? 850,
+        color: Cesium.Color.fromCssColorString('#c084fc'),
+      });
+    } else if (effectMatches(effect, ['engage', 'intercept', 'gun'])) {
+      const target = positionFor(effect.target_entity_id);
+      specs.push({
+        id: `effect/wire/${key}`,
+        visualKind: target ? 'line' : 'ring',
+        name: effect.kind.toUpperCase(),
+        position,
+        target,
+        radiusM: effect.radius_m ?? 180,
+        color: Cesium.Color.fromCssColorString('#fb923c'),
+      });
+    }
+  });
+
+  return specs;
+}
+
+function updateEffects(entities: EntityState[], wireEffects: EntityEffectState[] = []): void {
+  const active = new Set<string>();
+  for (const spec of collectEffectSpecs(entities, wireEffects)) {
+    active.add(spec.id);
+    const position = Cesium.Cartesian3.fromDegrees(
+      spec.position.lon_deg,
+      spec.position.lat_deg,
+      spec.position.alt_m,
+    );
+    const existing = effectVisuals.get(spec.id);
+    if (existing && existing.visualKind === spec.visualKind) {
+      existing.entity.position = position;
+      existing.entity.name = spec.name;
+      if (spec.visualKind === 'line' && spec.target) {
+        existing.entity.polyline.positions = Cesium.Cartesian3.fromDegreesArrayHeights([
+          spec.position.lon_deg, spec.position.lat_deg, spec.position.alt_m,
+          spec.target.lon_deg, spec.target.lat_deg, spec.target.alt_m,
+        ]);
+        existing.entity.polyline.material = new Cesium.PolylineDashMaterialProperty({ color: spec.color });
+      } else {
+        existing.entity.ellipse.semiMajorAxis = spec.radiusM;
+        existing.entity.ellipse.semiMinorAxis = spec.radiusM;
+        existing.entity.ellipse.material = spec.color.withAlpha(spec.visualKind === 'area' ? 0.32 : 0.06);
+        existing.entity.ellipse.outlineColor = spec.color.withAlpha(0.9);
+      }
+      continue;
+    }
+    if (existing) viewer.entities.remove(existing.entity);
+
+    const visual = spec.visualKind === 'line' && spec.target
+      ? viewer.entities.add({
+        id: spec.id,
+        name: spec.name,
+        polyline: {
+          positions: Cesium.Cartesian3.fromDegreesArrayHeights([
+            spec.position.lon_deg, spec.position.lat_deg, spec.position.alt_m,
+            spec.target.lon_deg, spec.target.lat_deg, spec.target.alt_m,
+          ]),
+          width: 3,
+          material: new Cesium.PolylineDashMaterialProperty({ color: spec.color, dashLength: 10 }),
+          arcType: Cesium.ArcType.NONE,
+        },
+      })
+      : viewer.entities.add({
+        id: spec.id,
+        name: spec.name,
+        position,
+        ellipse: {
+          semiMajorAxis: spec.radiusM,
+          semiMinorAxis: spec.radiusM,
+          material: spec.color.withAlpha(spec.visualKind === 'area' ? 0.32 : 0.06),
+          outline: true,
+          outlineColor: spec.color.withAlpha(0.9),
+          height: Math.max(0, spec.position.alt_m),
+        },
+      });
+    effectVisuals.set(spec.id, { entity: visual, visualKind: spec.visualKind });
+  }
+
+  for (const [id, visual] of effectVisuals) {
+    if (!active.has(id)) {
+      viewer.entities.remove(visual.entity);
+      effectVisuals.delete(id);
+    }
+  }
 }
 
 function updateLinks(links: LinkState[], traffic: TrafficState[]): void {
@@ -359,6 +655,7 @@ function handleMessage(value: HelloEnvelope | StateEnvelope): void {
     return;
   }
   updateEntities(value.payload.entities);
+  updateEffects(value.payload.entities, value.payload.effects);
   updateLinks(value.payload.links, value.payload.traffic);
   updateHud(value);
   if (!hasFramed && value.payload.entities.length) {
