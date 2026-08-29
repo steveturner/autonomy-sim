@@ -18,14 +18,17 @@ NetworkBackend <--- PropagationModel
     +--- analytic mesh (built in, zero external dependencies)
     +--- SigForge adapter (Phase 1 interface stub; real API in Phase 2)
     |
+    v
+Ditto peer + document replication model
+    |       C2 tasking, PLI, tracks, telemetry; eventual convergence in DDIL
     +----------> versioned state frames ----------> Axum REST/WebSocket
-                       |                                  |
-                       +--> CoT/TAK PLI + track sink      +--> CesiumJS 2D/3D
+    |                                                     |
+    +--> CoT/TAK gateway <--> TAKServer/WebTAK             +--> CesiumJS 2D/3D
 ```
 
 ### Entity and agent layer
 
-An `Entity` has a stable string ID, display name, kind (`drone`, `person`, `ground_vehicle`, `ground_station`, or `sensor`), domain (`ground`, `air`, `maritime`, or `space`), WGS84 position, velocity, heading, configured radios, and mission state. A fixed-step scheduler owns simulation time. Every tick is ordered: tick behavior tree, integrate kinematics, evaluate network links, record link transitions and synthetic Ditto traffic, emit CoT, publish a state frame. Scenario seed and tick size make analytic runs reproducible.
+An `Entity` has a stable string ID, display name, kind (`drone`, `person`, `ground_vehicle`, `ground_station`, or `sensor`), domain (`ground`, `air`, `maritime`, or `space`), WGS84 position, velocity, heading, configured radios, and mission state. Every entity is also exactly one Ditto peer with stable ID `ditto/<entity-id>`; there is no separate centralized messaging node. A fixed-step scheduler owns simulation time. Every tick is ordered: tick behavior trees, integrate kinematics, evaluate peer links, update local Ditto documents, replicate documents over available links, update convergence, export gateway-visible documents to CoT, and publish a state frame. Scenario seed and tick size make analytic runs reproducible.
 
 ### Behavior-tree and mission layer
 
@@ -39,15 +42,21 @@ The tree is an execution structure, not an optimizer. Later playbook selection c
 
 ### Network and propagation seams
 
-`NetworkBackend` owns node registration and returns a complete, deterministic set of pairwise `LinkState` values for a tick. The backend is responsible for link type, up/down state, normalized quality, distance, latency, loss, and capacity. It does not own entity motion or wall-clock scheduling.
+`NetworkBackend` owns node registration and returns a complete, deterministic set of pairwise `LinkState` values for a tick. These are **Ditto peer links riding an emulated carrier**, not an ad-hoc application messaging channel: `link_type` identifies the carrier (`mesh`, `cellular`, `satcom`, or `ble`), while the endpoints identify Ditto peers. A link transition means two peers gained or lost a replication path. The backend is responsible for up/down state, normalized quality, distance, latency, loss, and capacity. It does not own entity motion, Ditto documents, or wall-clock scheduling.
 
 The built-in analytic backend combines radio compatibility with a `PropagationModel`. Its outdoor model uses geodesic/slant distance, configured range, and a monotonic path-loss-inspired quality curve. The separate propagation trait keeps terrain/LOS, indoor body blocking, urban ray models, and ns-3 integration replaceable without changing missions or the API.
 
 The `SigForgeBackend` Phase 1 stub implements the same trait but returns a clear unavailable error. Phase 2 will register NEMs through SigForge REST/gRPC, publish position events, and consume its link matrix/WebSocket. IDs remain autonomy-sim IDs at this boundary; adapter-owned maps translate them to NEM IDs.
 
-### C2/TAK bridge
+### Ditto peer and document layer
 
-The outbound bridge renders Cursor-on-Target XML `event` records with `point` and `detail/contact` for platform PLI/track updates. Sinks are pluggable. Phase 1 includes an append-only file sink for a dependency-free demo and UDP/TCP sinks for a configured TAK endpoint. Incoming tasking is out of scope and must later pass authentication, authorization, validation, and explicit human-control policy before becoming mission input.
+Ditto is the primary inter-node communication model. C2 tasking, PLI, tracks, and platform telemetry live in the collections `c2.tasking`, `c2.pli`, `c2.tracks`, and `telemetry.platform`. Each peer updates its locally authored documents, discovers reachable peers from current `NetworkBackend` links, and exchanges newer document revisions within link quality/capacity budgets. Replicas remain available while disconnected and eventually converge when a path returns; no central broker is required.
+
+Phase 1 models CRDT behavior at the document/revision level: peer discovery, replica watermarks, bounded per-link propagation, pending-document counts, and convergence state. It intentionally does not embed `dittoffi`. Phase 2+ will replace this behavioral model with real Ditto small peers whose transports run through SigForge/CORE-EMANE, following the `ditto-barrage-*` scale-test pattern. The wire contract remains the observation boundary for both implementations.
+
+### C2/TAK gateway
+
+TAK is an edge gateway, not the platform-to-platform transport. The gateway watches the Ditto document space available at its local peer and maps replicated `c2.pli`/`c2.tracks` documents into Cursor-on-Target XML `event` records for TAKServer/WebTAK. Phase 1 includes append-only file, UDP, and TCP CoT sinks and exports only records whose latest document revision has reached the gateway replica. Phase 2 adds the reverse mapping from authenticated TAK tasking into `c2.tasking` documents; authorization, replay protection, validation, and explicit human approval remain mandatory before a task document can affect a mission.
 
 ### Visualization
 
@@ -92,6 +101,9 @@ The public interface is `autonomy-sim/v1`. Additive fields may appear without a 
     "links": [],
     "link_events": [],
     "traffic": [],
+    "ditto_peers": [],
+    "ditto_documents": [],
+    "ditto_replication_events": [],
     "czml": []
   }
 }
@@ -121,13 +133,15 @@ All angles are degrees, altitude is WGS84 meters, and speed is meters per second
 
 ### Link state and transitions
 
-Every configured compatible radio pair is present in `links`, including down links. Endpoint IDs are lexically sorted. `id` is stable and formatted `link/<link_type>/<a>/<b>`. Quality and loss are bounded `[0,1]`; capacity and traffic use bits per second.
+Every configured compatible radio pair is present in `links`, including down links. Endpoint IDs are lexically sorted. `id` is stable and formatted `link/<link_type>/<a>/<b>`. The corresponding peer IDs are explicit; each record is a Ditto replication path over the named carrier. Quality and loss are bounded `[0,1]`; capacity and traffic use bits per second.
 
 ```json
 {
   "id": "link/mesh/ground-c2/uav-alpha",
   "source": "ground-c2",
   "target": "uav-alpha",
+  "source_peer_id": "ditto/ground-c2",
+  "target_peer_id": "ditto/uav-alpha",
   "link_type": "mesh",
   "state": "up",
   "quality": 0.78,
@@ -135,6 +149,57 @@ Every configured compatible radio pair is present in `links`, including down lin
   "latency_ms": 18.2,
   "packet_loss": 0.04,
   "capacity_bps": 2800000
+}
+```
+
+### Ditto peer state
+
+`ditto_peers` contains one record per entity. `connected_peer_ids` is derived from all current up links, regardless of carrier. `document_count` counts locally present latest-or-stale replicas; `pending_documents` counts known global revisions not yet at that peer. `converged` is true when the peer holds the latest revision of every document currently known to the simulation.
+
+```json
+{
+  "peer_id": "ditto/uav-alpha",
+  "entity_id": "uav-alpha",
+  "connected_peer_ids": ["ditto/relay-one"],
+  "document_count": 14,
+  "pending_documents": 5,
+  "converged": false,
+  "collection_versions": {
+    "c2.pli": 19,
+    "c2.tasking": 1,
+    "c2.tracks": 19,
+    "telemetry.platform": 19
+  }
+}
+```
+
+### Ditto document state and replication events
+
+`ditto_documents` describes the latest known logical revision and which peers have that revision. Phase 1 uses single-author documents and scalar revisions as a behavioral stand-in for real Ditto CRDT metadata; real version vectors/conflict semantics arrive with `dittoffi`. `converged` means all scenario peers hold the latest revision.
+
+```json
+{
+  "collection": "c2.pli",
+  "document_id": "pli/uav-alpha",
+  "author_peer_id": "ditto/uav-alpha",
+  "revision": 9,
+  "updated_at_s": 8.0,
+  "replicated_to": ["ditto/relay-one", "ditto/uav-alpha"],
+  "converged": false
+}
+```
+
+`ditto_replication_events` contains document transfers completed during the current tick. It is ephemeral; durable replica state is in `ditto_documents` and `ditto_peers`.
+
+```json
+{
+  "collection": "c2.tasking",
+  "document_id": "task/isr-relay-demo",
+  "revision": 1,
+  "from_peer_id": "ditto/ground-c2",
+  "to_peer_id": "ditto/relay-one",
+  "link_id": "link/mesh/ground-c2/relay-one",
+  "replicated_at_s": 8.4
 }
 ```
 
@@ -153,7 +218,7 @@ Every configured compatible radio pair is present in `links`, including down lin
 
 ### Traffic state
 
-Traffic is a per-up-link aggregate for the current tick. In Phase 1 it is deterministic synthetic Ditto replication load, not packet capture.
+Traffic is a per-up-link aggregate for the current tick. In Phase 1 it is computed from completed document replication operations plus deterministic peer-discovery/keepalive overhead; it is not packet capture.
 
 ```json
 {
@@ -161,7 +226,9 @@ Traffic is a per-up-link aggregate for the current tick. In Phase 1 it is determ
   "tx_bps": 186000,
   "rx_bps": 171000,
   "messages_per_s": 24.0,
-  "queue_depth": 2
+  "queue_depth": 2,
+  "document_ops_per_s": 5.0,
+  "pending_documents": 2
 }
 ```
 
@@ -185,7 +252,6 @@ Traffic is a per-up-link aggregate for the current tick. In Phase 1 it is determ
 - Colledanchise and Ögren, [Behavior Trees in Robotics and AI](https://arxiv.org/abs/1709.00084), motivates modular, reactive, analyzable task switching.
 - Mouret and Clune, [Illuminating Search Spaces by Mapping Elites](https://arxiv.org/abs/1504.04909), is the basis for a future diverse playbook archive rather than a single opaque policy.
 - [CORE with EMANE](https://coreemu.github.io/core/emane.html) and the [EMANE guide](https://emane.io/introduction) describe the real network-emulation tier that SigForge replaces/adapts.
-- Ditto's local repository demonstrates transport-abstracted peer sync and direction-aware link properties; autonomy-sim visualizes that connectivity without embedding Ditto itself.
+- Ditto's local repository defines the transport-abstracted peer-sync model used here; Phase 1 simulates its discovery, document replication, DDIL persistence, and eventual convergence, while Phase 2+ embeds real small peers over SigForge/CORE-EMANE.
 - Cesium's [CzmlDataSource](https://cesium.com/learn/cesiumjs/ref-doc/CzmlDataSource.html) is the compatibility target for the CZML projection.
 - The DoD index for the [Cursor-on-Target Message Standard](https://quicksearch.dla.mil/qsDocDetails.aspx?ident_number=284928) defines the C2 interchange family used by the TAK bridge.
-

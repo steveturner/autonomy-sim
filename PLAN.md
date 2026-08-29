@@ -7,10 +7,11 @@ The Phase 1 acceptance path is a scenario TOML driving a fixed-step Rust simulat
 1. Freeze `autonomy-sim/v1` in `ARCHITECTURE.md`; scaffold Rust 2024 workspace and Vite frontend.
 2. Move one scenario entity through the scheduler and display it from `/api/v1/stream`.
 3. Add the entity/domain model, auditable behavior-tree composites/leaves, and area-search, persistent-surveillance, and comms-relay playbooks.
-4. Add `NetworkBackend` and `PropagationModel`; implement deterministic analytic links, link transition detection, synthetic Ditto traffic, and the explicit SigForge adapter stub.
-5. Add CoT rendering plus file/UDP/TCP sinks and verify valid PLI/track event output.
-6. Render all platforms and live link flaps in Cesium 2D/3D, with per-transport styling and optional photorealistic tiles.
-7. Ship the ISR demo, tests, launch commands, license, and a documented end-to-end smoke check.
+4. Add `NetworkBackend` and `PropagationModel`; treat every entity as a Ditto peer and every carrier link as a Ditto peer replication path.
+5. Simulate the `c2.tasking`, `c2.pli`, `c2.tracks`, and `telemetry.platform` collections with replica watermarks, bounded document propagation, DDIL persistence, convergence state, and document-derived traffic.
+6. Add the CoT/TAK gateway: export gateway-visible PLI/track documents through file/UDP/TCP sinks and verify valid event output.
+7. Render all platforms, Ditto peer-link flaps, replication activity, and convergence in Cesium 2D/3D, with per-transport styling and optional photorealistic tiles.
+8. Ship the ISR demo, tests, launch commands, license, and a documented end-to-end smoke check.
 
 Phase 1 is complete when a clean checkout can run the analytic backend without CORE/EMANE, observe entities moving, see at least one mesh link transition up/down, fetch the REST snapshot, and inspect emitted CoT XML. No lethal-engagement logic is accepted.
 
@@ -19,8 +20,9 @@ Phase 1 is complete when a clean checkout can run the analytic backend without C
 - Replace `SigForgeBackend`'s unavailable implementation with REST/gRPC node registration, mobility event publication, and WebSocket link/traffic ingestion.
 - Preserve autonomy-sim IDs while persisting NEM-ID mappings and reconnect cursors.
 - Validate analytic-versus-SigForge traces using identical scenarios.
-- Add authenticated TAK Server transport, certificate handling, and a quarantined CoT ingest path.
-- Convert only allow-listed, authenticated C2 tasking into proposed mission changes; require explicit human approval before activation.
+- Replace behavioral replicas with real `dittoffi`/small-peer instances over the SigForge/CORE-EMANE transport tier, aligned with the `ditto-barrage-*` scale runs.
+- Add authenticated TAK Server transport and map validated inbound CoT/tasking into Ditto `c2.tasking` documents at the gateway.
+- Convert only allow-listed, authenticated task documents into proposed mission changes; require explicit human approval before activation.
 
 ## Phase 3 — propagation and environment fidelity
 
@@ -51,7 +53,7 @@ Phase 1 is complete when a clean checkout can run the analytic backend without C
 - SigForge transport: prefer gRPC for control and its WebSocket for observation unless measured consistency requires one channel.
 - TAK ingest: keep it isolated from mission execution until identity, authorization, replay protection, and human-approval semantics are decided.
 - Photorealistic terrain: optional external keys must enhance the demo, never become a launch dependency.
-- Traffic: Phase 1 synthetic aggregates prove the contract; packet-derived Ditto telemetry belongs in the real backend.
+- Ditto fidelity: Phase 1 revision-level propagation proves DDIL/convergence semantics; real CRDT metadata, conflicts, discovery, and packet telemetry belong to the Phase 2+ `dittoffi` backend.
 
 ## Research basis
 
