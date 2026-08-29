@@ -1,0 +1,36 @@
+[package]
+name = "autonomy-sim-ditto-real"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Opt-in real Ditto small-peer transport for autonomy-sim"
+build = "build.rs"
+
+[features]
+default = []
+dittoffi = []
+
+[dependencies]
+autonomy-sim = { path = "../autonomy-sim" }
+serde.workspace = true
+serde_cbor.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[build-dependencies]
+cc.workspace = true
+
+[dev-dependencies]
+tempfile = "3.23"
+
+[[bin]]
+name = "autonomy-sim-ditto-real-demo"
+path = "src/bin/demo.rs"
+required-features = ["dittoffi"]
+
+[[test]]
+name = "real_peers"
+path = "tests/real_peers.rs"
+required-features = ["dittoffi"]
+
