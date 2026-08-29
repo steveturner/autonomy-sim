@@ -1,0 +1,29 @@
+[scenario]
+name = "thin-slice"
+description = "One moving ISR platform for sim-to-WebSocket verification"
+seed = 42
+realtime = true
+
+[simulation]
+tick_hz = 5.0
+network_backend = "analytic"
+
+[api]
+bind = "127.0.0.1:9000"
+
+[[nodes]]
+id = "uav-alpha"
+name = "UAV Alpha"
+kind = "drone"
+domain = "air"
+position = { lat_deg = 34.0500, lon_deg = -117.2500, alt_m = 180.0 }
+
+[nodes.mission]
+playbook = "area_search"
+speed_mps = 22.0
+waypoints = [
+  { lat_deg = 34.0500, lon_deg = -117.2500, alt_m = 180.0 },
+  { lat_deg = 34.0550, lon_deg = -117.2440, alt_m = 180.0 },
+  { lat_deg = 34.0470, lon_deg = -117.2410, alt_m = 180.0 },
+]
+
