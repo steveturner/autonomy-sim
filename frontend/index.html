@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>autonomy-sim // ISR mesh</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/cesium@1.124/Build/Cesium/Widgets/widgets.css" />
+    <script src="https://cdn.jsdelivr.net/npm/cesium@1.124/Build/Cesium/Cesium.js"></script>
+  </head>
+  <body>
+    <main id="app">
+      <div id="cesiumContainer" aria-label="Live autonomy simulation map"></div>
+      <svg id="linkOverlay" aria-hidden="true"></svg>
+      <header class="topbar">
+        <div class="brand"><span class="brand-mark">A/S</span><span>autonomy-sim</span></div>
+        <div class="mission"><span class="eyebrow">MISSION</span><strong id="scenarioName">CONNECTING</strong></div>
+        <div id="connection" class="connection pending"><span></span>WAITING</div>
+      </header>
+      <aside class="hud hud-left">
+        <div class="hud-title">LIVE STATE</div>
+        <div class="metric"><span>SIM TIME</span><strong id="simTime">00:00.0</strong></div>
+        <div class="metric"><span>PLATFORMS</span><strong id="entityCount">0</strong></div>
+        <div class="metric"><span>DITTO LINKS</span><strong id="linkCount">0</strong></div>
+        <div class="metric"><span>CRDT DOCUMENTS</span><strong id="documentCount">0</strong></div>
+        <div class="metric"><span>CONVERGED PEERS</span><strong id="convergence">0 / 0</strong></div>
+        <div class="metric"><span>TRAFFIC</span><strong id="trafficRate">0 kbps</strong></div>
+      </aside>
+      <aside class="hud hud-right">
+        <div class="hud-title">LINK TYPES</div>
+        <div class="legend"><i class="mesh"></i><span>Mesh</span><b id="meshCount">0</b></div>
+        <div class="legend"><i class="cellular"></i><span>Cellular</span><b id="cellularCount">0</b></div>
+        <div class="legend"><i class="satcom"></i><span>Satcom</span><b id="satcomCount">0</b></div>
+        <div class="legend"><i class="ble"></i><span>BLE</span><b id="bleCount">0</b></div>
+        <div class="hud-title events-title">LINK EVENTS</div>
+        <ol id="eventLog" class="event-log"><li class="muted">No transitions yet</li></ol>
+      </aside>
+      <nav class="mode-switch" aria-label="Scene mode">
+        <button id="mode2d" class="active" type="button">2D TOP-DOWN</button>
+        <button id="mode3d" type="button">3D PHOTOREAL</button>
+      </nav>
+      <div class="safety">SIMULATION • ISR / COORDINATION ONLY</div>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
