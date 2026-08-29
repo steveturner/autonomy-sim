@@ -1,4 +1,4 @@
-.PHONY: setup live demo wildfire wildfire-live frontend check demo-sigforge build-dittoffi test-ditto-real demo-ditto-real demo-ditto-peers clean-output
+.PHONY: setup live demo wildfire wildfire-live cuas demo-cuas frontend check demo-sigforge build-dittoffi test-ditto-real demo-ditto-real demo-ditto-peers clean-output
 
 HOST ?= 127.0.0.1
 SCENARIO ?= isr-relay-demo
@@ -11,21 +11,28 @@ setup:
 
 live:
 	@set -eu; \
-		cargo run -- --scenario scenarios/isr-demo.toml --bind $(HOST):9000 & sim_pid=$$!; \
+		cargo run -p autonomy-sim -- --scenario scenarios/isr-demo.toml --bind $(HOST):9000 & sim_pid=$$!; \
 		trap 'kill "$$sim_pid" 2>/dev/null || true' EXIT INT TERM; \
 		VITE_BIND_HOST=$(HOST) npm --prefix frontend run dev
 
 demo:
-	cargo run -- --scenario scenarios/isr-demo.toml --bind $(HOST):9000
+	cargo run -p autonomy-sim -- --scenario scenarios/isr-demo.toml --bind $(HOST):9000
 
 wildfire:
-	cargo run -- --scenario wildfire-paradise --bind $(HOST):9000
+	cargo run -p autonomy-sim -- --scenario wildfire-paradise --bind $(HOST):9000
 
 wildfire-live:
 	@set -eu; \
-		cargo run -- --scenario wildfire-paradise --bind $(HOST):9000 & sim_pid=$$!; \
+		cargo run -p autonomy-sim -- --scenario wildfire-paradise --bind $(HOST):9000 & sim_pid=$$!; \
 		trap 'kill "$$sim_pid" 2>/dev/null || true' EXIT INT TERM; \
 		VITE_BIND_HOST=$(HOST) npm --prefix frontend run dev
+
+cuas:
+	cargo run -p autonomy-sim -- --scenario cuas-stadium --network-backend analytic --bind $(HOST):9000
+
+demo-cuas: build-dittoffi
+	@test -n "$${DITTO_LICENSE:-}" || { echo "set DITTO_LICENSE to an offline Ditto license"; exit 2; }
+	env -u NO_COLOR DITTO_SOURCE_DIR="$(DITTO_SOURCE_DIR)" DITTOFFI_LIB_DIR="$(DITTO_BUILD_TARGET_DIR)/release/deps" LD_LIBRARY_PATH="$(DITTO_BUILD_TARGET_DIR)/release/deps$${LD_LIBRARY_PATH:+:$${LD_LIBRARY_PATH}}" RUST_LOG="$${RUST_LOG:-info}" cargo run -p autonomy-sim --features ditto-real -- --scenario cuas-stadium --ditto real --network-backend analytic --bind $(HOST):9000
 
 frontend:
 	VITE_BIND_HOST=$(HOST) npm --prefix frontend run dev

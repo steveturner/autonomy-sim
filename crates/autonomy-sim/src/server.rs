@@ -298,6 +298,10 @@ mod tests {
         assert_eq!(list["scenarios"][1]["name"], "Wildfire - Paradise");
         assert_eq!(list["scenarios"][1]["entity_count"], 14);
         assert_eq!(list["scenarios"][1]["default"], false);
+        assert_eq!(list["scenarios"][2]["id"], "cuas-stadium");
+        assert_eq!(list["scenarios"][2]["name"], "C-UAS Stadium Defense");
+        assert_eq!(list["scenarios"][2]["entity_count"], 17);
+        assert_eq!(list["scenarios"][2]["default"], false);
 
         let Json(frame) = snapshot(
             Query(ScenarioQuery {
