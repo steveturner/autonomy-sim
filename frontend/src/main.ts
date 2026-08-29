@@ -1,9 +1,25 @@
 import './style.css';
-import type { EntityState, HelloEnvelope, LinkEvent, LinkState, LinkType, StateEnvelope, TrafficState } from './types';
+import milsymbol from 'milsymbol';
+import type {
+  EntityEffectState,
+  EntityState,
+  FireCellState,
+  HelloEnvelope,
+  LinkEvent,
+  LinkState,
+  LinkType,
+  ScenarioSummary,
+  StateEnvelope,
+  TrafficState,
+  BaseState,
+} from './types';
 
 declare const Cesium: any;
 
 (window as any).CESIUM_BASE_URL = 'https://cdn.jsdelivr.net/npm/cesium@1.124/Build/Cesium/';
+
+const cesiumIonToken = (import.meta.env.VITE_CESIUM_ION_TOKEN as string | undefined)?.trim();
+if (cesiumIonToken) Cesium.Ion.defaultAccessToken = cesiumIonToken;
 
 const viewer = new Cesium.Viewer('cesiumContainer', {
   animation: false,
@@ -22,20 +38,91 @@ const viewer = new Cesium.Viewer('cesiumContainer', {
 
 viewer.scene.globe.enableLighting = false;
 viewer.scene.backgroundColor = Cesium.Color.fromCssColorString('#02070b');
-viewer.imageryLayers.addImageryProvider(new Cesium.OpenStreetMapImageryProvider({
-  url: 'https://tile.openstreetmap.org/',
-}));
 
-const entityVisuals = new Map<string, { marker: any; trail: any; history: number[] }>();
+const ESRI_WORLD_IMAGERY_URL = 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer';
+
+async function imageryProvider(): Promise<any> {
+  const source = ((import.meta.env.VITE_IMAGERY_SOURCE as string | undefined) || 'esri').trim().toLowerCase();
+  const customUrl = (import.meta.env.VITE_IMAGERY_URL as string | undefined)?.trim();
+
+  if (source === 'url') {
+    if (!customUrl) throw new Error('VITE_IMAGERY_URL is required when VITE_IMAGERY_SOURCE=url');
+    return new Cesium.UrlTemplateImageryProvider({ url: customUrl });
+  }
+  if (source === 'esri') {
+    return Cesium.ArcGisMapServerImageryProvider.fromUrl(customUrl || ESRI_WORLD_IMAGERY_URL);
+  }
+  if (!cesiumIonToken) {
+    throw new Error(`${source} imagery requires VITE_CESIUM_ION_TOKEN`);
+  }
+  if (source === 'sentinel-2' || source === 'sentinel2') {
+    return Cesium.IonImageryProvider.fromAssetId(3954);
+  }
+  if (source === 'bing-labels') {
+    return Cesium.createWorldImageryAsync({ style: Cesium.IonWorldImageryStyle.AERIAL_WITH_LABELS });
+  }
+  if (source === 'bing' || source === 'bing-aerial' || source === 'cesium-world') {
+    return Cesium.createWorldImageryAsync({ style: Cesium.IonWorldImageryStyle.AERIAL });
+  }
+  throw new Error(`Unsupported VITE_IMAGERY_SOURCE: ${source}`);
+}
+
+async function configureGlobe(): Promise<void> {
+  try {
+    viewer.imageryLayers.addImageryProvider(await imageryProvider());
+  } catch (error) {
+    console.warn('Configured satellite imagery unavailable; falling back to Esri World Imagery', error);
+    if (((import.meta.env.VITE_IMAGERY_SOURCE as string | undefined) || 'esri').toLowerCase() !== 'esri') {
+      try {
+        viewer.imageryLayers.addImageryProvider(
+          await Cesium.ArcGisMapServerImageryProvider.fromUrl(ESRI_WORLD_IMAGERY_URL),
+        );
+      } catch (fallbackError) {
+        console.error('Esri World Imagery is unavailable', fallbackError);
+      }
+    }
+  }
+
+  if (!cesiumIonToken) return;
+  try {
+    viewer.terrainProvider = await Cesium.createWorldTerrainAsync({
+      requestVertexNormals: true,
+      requestWaterMask: true,
+    });
+  } catch (error) {
+    console.warn('Cesium World Terrain unavailable; retaining ellipsoid terrain', error);
+  }
+}
+
+void configureGlobe();
+
+const entityVisuals = new Map<string, {
+  marker: any;
+  trail: any;
+  history: number[];
+  symbolKey: string;
+}>();
+const effectVisuals = new Map<string, { entity: any; visualKind: 'area' | 'ring' | 'line' }>();
+const svgEffectVisuals = new Map<string, {
+  element: SVGCircleElement | SVGLineElement;
+  spec: EffectVisualSpec;
+}>();
 const linkVisuals = new Map<string, any>();
 const svgLinkVisuals = new Map<string, {
   line: SVGLineElement; source: string; target: string; linkType: LinkType;
 }>();
 const entityPositions = new Map<string, EntityState['position']>();
+const symbolImages = new Map<string, { image: HTMLCanvasElement; width: number; height: number }>();
 let hasFramed = false;
 let googleTiles: any = null;
 let reconnectTimer = 0;
 let socket: WebSocket | null = null;
+let connectionGeneration = 0;
+let lastSequence = -1;
+let lastSimTime = -1;
+let selectedScenario: ScenarioSummary | null = null;
+let observedScenarioId: string | null = null;
+let scenarios: ScenarioSummary[] = [];
 
 const linkColors: Record<LinkType, any> = {
   mesh: Cesium.Color.fromCssColorString('#22d3ee'),
@@ -58,23 +145,76 @@ function byId<T extends Element>(id: string): T {
   return node as unknown as T;
 }
 
-function iconFor(entity: EntityState): string {
-  switch (entity.kind) {
-    case 'drone': return '▲';
-    case 'person': return '●';
-    case 'ground_vehicle': return '◆';
-    case 'ground_station': return '■';
-    case 'sensor': return '◇';
-  }
+function normalizedAffiliation(entity: EntityState): 'friendly' | 'hostile' | 'neutral' | 'unknown' {
+  const value = String(entity.affiliation || '').toLowerCase();
+  if (value === 'friendly' || value === 'friend' || value === 'f') return 'friendly';
+  if (value === 'hostile' || value === 'h') return 'hostile';
+  if (value === 'neutral' || value === 'n') return 'neutral';
+  if (entity.kind === 'threat_uas') return 'hostile';
+  return entity.sidc ? 'unknown' : 'friendly';
 }
 
-function colorFor(entity: EntityState): any {
-  switch (entity.domain) {
-    case 'air': return Cesium.Color.fromCssColorString('#41bfff');
-    case 'ground': return Cesium.Color.fromCssColorString('#4ce69a');
-    case 'maritime': return Cesium.Color.fromCssColorString('#3b82f6');
-    case 'space': return Cesium.Color.fromCssColorString('#ffca3a');
+function affiliationColor(entity: EntityState): any {
+  const colors: Record<ReturnType<typeof normalizedAffiliation>, string> = {
+    friendly: '#38bdf8',
+    hostile: '#fb4f5f',
+    neutral: '#4ade80',
+    unknown: '#facc15',
+  };
+  return Cesium.Color.fromCssColorString(colors[normalizedAffiliation(entity)]);
+}
+
+function fallbackSidc(entity: EntityState): string {
+  const affiliationCode: Record<ReturnType<typeof normalizedAffiliation>, string> = {
+    friendly: 'F', hostile: 'H', neutral: 'N', unknown: 'U',
+  };
+  const affiliation = affiliationCode[normalizedAffiliation(entity)];
+  if (entity.domain === 'air' || entity.kind === 'drone' || entity.kind === 'threat_uas') {
+    return `S${affiliation}APMFQ--------`;
   }
+  if (entity.kind === 'person') return `S${affiliation}GPUCI--------`;
+  return `S${affiliation}GPU----------`;
+}
+
+function symbolFor(entity: EntityState): {
+  key: string;
+  image: HTMLCanvasElement;
+  width: number;
+  height: number;
+} {
+  const sidc = entity.sidc?.trim() || fallbackSidc(entity);
+  const key = sidc.toUpperCase();
+  let cached = symbolImages.get(key);
+  if (!cached) {
+    try {
+      const image = new milsymbol.Symbol(sidc, {
+        size: 36,
+        padding: 2,
+        infoFields: false,
+        standard: '2525',
+      }).asCanvas(2);
+      const maxDimension = Math.max(image.width, image.height, 1);
+      cached = {
+        image,
+        width: Math.max(24, Math.round((image.width / maxDimension) * 50)),
+        height: Math.max(24, Math.round((image.height / maxDimension) * 50)),
+      };
+    } catch (error) {
+      console.warn(`Unable to render SIDC ${sidc}; using a generic symbol`, error);
+      const image = new milsymbol.Symbol('SUGPU----------', { size: 36, padding: 2 }).asCanvas(2);
+      cached = { image, width: 42, height: 42 };
+    }
+    symbolImages.set(key, cached);
+  }
+  return { key, ...cached };
+}
+
+function compactLabel(entity: EntityState): string {
+  const callsign = entity.callsign?.trim() || entity.name;
+  const missionState = entity.mission_state?.trim()
+    || entity.mission.active_node
+    || entity.mission.status;
+  return `${callsign} · ${missionState}`;
 }
 
 function updateEntities(entities: EntityState[]): void {
@@ -83,39 +223,46 @@ function updateEntities(entities: EntityState[]): void {
     current.add(entity.id);
     entityPositions.set(entity.id, entity.position);
     const cartesian = Cesium.Cartesian3.fromDegrees(entity.position.lon_deg, entity.position.lat_deg, entity.position.alt_m);
+    const symbol = symbolFor(entity);
+    const heading = -Cesium.Math.toRadians(entity.heading_deg ?? entity.kinematics.heading_deg);
     const existing = entityVisuals.get(entity.id);
     if (existing) {
       existing.marker.position = cartesian;
-      existing.marker.orientation = Cesium.Transforms.headingPitchRollQuaternion(
-        cartesian,
-        new Cesium.HeadingPitchRoll(Cesium.Math.toRadians(entity.kinematics.heading_deg), 0, 0),
-      );
+      existing.marker.billboard.rotation = heading;
+      existing.marker.label.text = compactLabel(entity);
       existing.marker.description = description(entity);
+      if (existing.symbolKey !== symbol.key) {
+        existing.marker.billboard.image = symbol.image;
+        existing.marker.billboard.width = symbol.width;
+        existing.marker.billboard.height = symbol.height;
+        existing.symbolKey = symbol.key;
+      }
       existing.history.push(entity.position.lon_deg, entity.position.lat_deg, entity.position.alt_m);
       if (existing.history.length > 270) existing.history.splice(0, 3);
       existing.trail.polyline.positions = Cesium.Cartesian3.fromDegreesArrayHeights(existing.history);
       continue;
     }
-    const color = colorFor(entity);
+    const color = affiliationColor(entity);
     const marker = viewer.entities.add({
       id: `entity/${entity.id}`,
       name: entity.name,
       position: cartesian,
-      point: {
-        pixelSize: entity.kind === 'person' ? 9 : 13,
-        color,
-        outlineColor: Cesium.Color.WHITE.withAlpha(0.9),
-        outlineWidth: 1.5,
+      billboard: {
+        image: symbol.image,
+        width: symbol.width,
+        height: symbol.height,
+        rotation: heading,
+        alignedAxis: Cesium.Cartesian3.ZERO,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
       },
       label: {
-        text: `${iconFor(entity)}  ${entity.name}`,
-        font: '600 13px IBM Plex Mono, monospace',
+        text: compactLabel(entity),
+        font: '600 12px IBM Plex Mono, monospace',
         fillColor: Cesium.Color.WHITE,
         outlineColor: Cesium.Color.BLACK,
         outlineWidth: 3,
         style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-        pixelOffset: new Cesium.Cartesian2(0, -25),
+        pixelOffset: new Cesium.Cartesian2(0, -34),
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
       },
       description: description(entity),
@@ -125,7 +272,7 @@ function updateEntities(entities: EntityState[]): void {
       id: `track/${entity.id}`,
       polyline: { positions: [cartesian], width: 1.5, material: color.withAlpha(0.48) },
     });
-    entityVisuals.set(entity.id, { marker, trail, history });
+    entityVisuals.set(entity.id, { marker, trail, history, symbolKey: symbol.key });
   }
   for (const [id, visual] of entityVisuals) {
     if (!current.has(id)) {
@@ -139,12 +286,324 @@ function updateEntities(entities: EntityState[]): void {
 
 function description(entity: EntityState): string {
   return `<table class="cesium-infoBox-defaultTable"><tbody>
-    <tr><th>Type</th><td>${entity.kind} / ${entity.domain}</td></tr>
-    <tr><th>Mission</th><td>${entity.mission.playbook}</td></tr>
-    <tr><th>Active node</th><td>${entity.mission.active_node}</td></tr>
+    <tr><th>Callsign</th><td>${escapeHtml(entity.callsign || entity.name)}</td></tr>
+    <tr><th>SIDC</th><td>${escapeHtml(entity.sidc || 'legacy fallback')}</td></tr>
+    <tr><th>Affiliation</th><td>${escapeHtml(normalizedAffiliation(entity))}</td></tr>
+    <tr><th>Type</th><td>${escapeHtml(entity.kind)} / ${escapeHtml(entity.domain)}</td></tr>
+    <tr><th>Mission</th><td>${escapeHtml(entity.mission.playbook)}</td></tr>
+    ${entity.mission_role ? `<tr><th>Role</th><td>${escapeHtml(entity.mission_role)}</td></tr>` : ''}
+    <tr><th>Active node</th><td>${escapeHtml(entity.mission_state || entity.mission.active_node)}</td></tr>
+    ${entity.retardant_pct !== undefined ? `<tr><th>Retardant</th><td>${entity.retardant_pct.toFixed(0)}%</td></tr>` : ''}
     <tr><th>Speed</th><td>${entity.kinematics.speed_mps.toFixed(1)} m/s</td></tr>
     <tr><th>Altitude</th><td>${entity.position.alt_m.toFixed(0)} m</td></tr>
   </tbody></table>`;
+}
+
+function escapeHtml(value: unknown): string {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+interface EffectVisualSpec {
+  id: string;
+  visualKind: 'area' | 'ring' | 'line';
+  name: string;
+  position: EntityState['position'];
+  target?: EntityState['position'];
+  radiusM: number;
+  pointSize?: number;
+  color: any;
+}
+
+function numberValue(...values: unknown[]): number | undefined {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+  }
+  return undefined;
+}
+
+function normalizedIntensity(value: unknown): number {
+  const numeric = numberValue(value) ?? 0.5;
+  return Cesium.Math.clamp(numeric > 1 ? numeric / 100 : numeric, 0, 1);
+}
+
+function effectMatches(effect: EntityEffectState, terms: string[]): boolean {
+  const kind = effect.kind.toLowerCase();
+  return terms.some((term) => kind.includes(term));
+}
+
+function isActive(entity: EntityState, effect?: EntityEffectState): boolean {
+  if (effect?.active !== undefined) return effect.active;
+  if (entity.active !== undefined) return entity.active;
+  return entity.mission.status === 'running';
+}
+
+function collectEffectSpecs(
+  entities: EntityState[],
+  fireCells: FireCellState[],
+  base: BaseState | null,
+): EffectVisualSpec[] {
+  const specs: EffectVisualSpec[] = [];
+  const byEntityId = new Map(entities.map((entity) => [entity.id, entity]));
+  const fireCellIds = new Set(fireCells.map((cell) => cell.id));
+  const positionFor = (id: string | undefined, fallback?: EntityState['position']) => (
+    (id && byEntityId.get(id)?.position) || fallback
+  );
+
+  for (const cell of fireCells) {
+    const intensity = normalizedIntensity(cell.intensity);
+    specs.push({
+      id: `effect/fire-cell/${cell.id}`,
+      visualKind: 'area',
+      name: `FIRE CELL / ${cell.id} · ${cell.status}${cell.assigned_tanker ? ` · ${cell.assigned_tanker}` : ''}`,
+      position: cell.position,
+      radiusM: 70 + intensity * 280,
+      pointSize: 16 + intensity * 24,
+      color: Cesium.Color.lerp(
+        Cesium.Color.fromCssColorString('#fbbf24'),
+        Cesium.Color.fromCssColorString('#ef233c'),
+        intensity,
+        new Cesium.Color(),
+      ),
+    });
+  }
+
+  if (base && !byEntityId.has(base.id)) {
+    specs.push({
+      id: `effect/base/${base.id}`,
+      visualKind: 'ring',
+      name: `BASE / ${base.name} · ${base.occupied_slots.length}/${base.reload_slots} SLOTS`,
+      position: base.position,
+      radiusM: 85,
+      color: Cesium.Color.fromCssColorString('#38bdf8'),
+    });
+  }
+
+  for (const entity of entities) {
+    const nestedEffects = entity.effects || [];
+    if (entity.kind === 'fire' && !fireCellIds.has(entity.id)) {
+      const intensity = normalizedIntensity(entity.intensity);
+      const color = Cesium.Color.lerp(
+        Cesium.Color.fromCssColorString('#fbbf24'),
+        Cesium.Color.fromCssColorString('#ef233c'),
+        intensity,
+        new Cesium.Color(),
+      );
+      specs.push({
+        id: `effect/entity/${entity.id}/fire`,
+        visualKind: 'area',
+        name: `FIRE CELL / ${entity.name}`,
+        position: entity.position,
+        radiusM: numberValue(entity.effect_radius_m, entity.radius_m) ?? 70 + intensity * 280,
+        pointSize: 16 + intensity * 24,
+        color,
+      });
+    }
+
+    if (entity.kind === 'base' || entity.kind === 'protected_site') {
+      specs.push({
+        id: `effect/entity/${entity.id}/site`,
+        visualKind: 'ring',
+        name: `${entity.kind.toUpperCase()} / ${entity.name}`,
+        position: entity.position,
+        radiusM: numberValue(entity.effect_radius_m, entity.radius_m) ?? 85,
+        color: affiliationColor(entity),
+      });
+    }
+
+    const jammerEffect = nestedEffects.find((effect) => effectMatches(effect, ['jam', 'electronic_warfare', 'ew_']));
+    if ((entity.kind === 'ew_jammer' || entity.kind === 'jammer' || jammerEffect) && isActive(entity, jammerEffect)) {
+      specs.push({
+        id: `effect/entity/${entity.id}/jammer`,
+        visualKind: 'ring',
+        name: `EW JAMMING / ${entity.name}`,
+        position: entity.position,
+        radiusM: numberValue(jammerEffect?.radius_m, entity.effect_radius_m, entity.radius_m) ?? 850,
+        color: Cesium.Color.fromCssColorString('#c084fc'),
+      });
+    }
+
+    const engagement = nestedEffects.find((effect) => effectMatches(effect, ['engage', 'intercept', 'gun']));
+    const targetId = engagement?.target_entity_id || entity.engagement_target_id || entity.target_id;
+    if ((entity.kind === 'interceptor' || entity.kind === 'gun_system' || engagement) && isActive(entity, engagement)) {
+      const target = positionFor(targetId);
+      specs.push({
+        id: `effect/entity/${entity.id}/engagement`,
+        visualKind: target ? 'line' : 'ring',
+        name: `ENGAGEMENT / ${entity.name}${targetId ? ` → ${targetId}` : ''}`,
+        position: entity.position,
+        target,
+        radiusM: numberValue(engagement?.radius_m, entity.effect_radius_m, entity.radius_m) ?? 180,
+        color: Cesium.Color.fromCssColorString(entity.kind === 'gun_system' ? '#fb923c' : '#f43f5e'),
+      });
+    }
+  }
+
+  return specs;
+}
+
+function updateEffects(
+  entities: EntityState[],
+  fireCells: FireCellState[] = [],
+  base: BaseState | null = null,
+): void {
+  const active = new Set<string>();
+  for (const spec of collectEffectSpecs(entities, fireCells, base)) {
+    active.add(spec.id);
+    updateEffectOverlay(spec);
+    const position = Cesium.Cartesian3.fromDegrees(
+      spec.position.lon_deg,
+      spec.position.lat_deg,
+      spec.position.alt_m,
+    );
+    const existing = effectVisuals.get(spec.id);
+    if (existing && existing.visualKind === spec.visualKind) {
+      existing.entity.position = position;
+      existing.entity.name = spec.name;
+      if (spec.visualKind === 'line' && spec.target) {
+        existing.entity.polyline.positions = Cesium.Cartesian3.fromDegreesArrayHeights([
+          spec.position.lon_deg, spec.position.lat_deg, spec.position.alt_m,
+          spec.target.lon_deg, spec.target.lat_deg, spec.target.alt_m,
+        ]);
+        existing.entity.polyline.material = new Cesium.PolylineDashMaterialProperty({ color: spec.color });
+      } else {
+        existing.entity.ellipse.semiMajorAxis = spec.radiusM;
+        existing.entity.ellipse.semiMinorAxis = spec.radiusM;
+        existing.entity.ellipse.material = spec.color.withAlpha(spec.visualKind === 'area' ? 0.32 : 0.06);
+        existing.entity.ellipse.outlineColor = spec.color.withAlpha(0.9);
+        if (existing.entity.point && spec.pointSize) {
+          existing.entity.point.pixelSize = spec.pointSize;
+          existing.entity.point.color = spec.color.withAlpha(0.9);
+        }
+      }
+      continue;
+    }
+    if (existing) viewer.entities.remove(existing.entity);
+
+    const visual = spec.visualKind === 'line' && spec.target
+      ? viewer.entities.add({
+        id: spec.id,
+        name: spec.name,
+        polyline: {
+          positions: Cesium.Cartesian3.fromDegreesArrayHeights([
+            spec.position.lon_deg, spec.position.lat_deg, spec.position.alt_m,
+            spec.target.lon_deg, spec.target.lat_deg, spec.target.alt_m,
+          ]),
+          width: 3,
+          material: new Cesium.PolylineDashMaterialProperty({ color: spec.color, dashLength: 10 }),
+          arcType: Cesium.ArcType.NONE,
+        },
+      })
+      : viewer.entities.add({
+        id: spec.id,
+        name: spec.name,
+        position,
+        ellipse: {
+          semiMajorAxis: spec.radiusM,
+          semiMinorAxis: spec.radiusM,
+          material: spec.color.withAlpha(spec.visualKind === 'area' ? 0.32 : 0.06),
+          outline: true,
+          outlineColor: spec.color.withAlpha(0.9),
+          height: Math.max(0, spec.position.alt_m) + 2,
+        },
+        point: spec.visualKind === 'area' ? {
+          pixelSize: spec.pointSize || 18,
+          color: spec.color.withAlpha(0.9),
+          outlineColor: Cesium.Color.WHITE.withAlpha(0.85),
+          outlineWidth: 1.5,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        } : undefined,
+      });
+    effectVisuals.set(spec.id, { entity: visual, visualKind: spec.visualKind });
+  }
+
+  for (const [id, visual] of effectVisuals) {
+    if (!active.has(id)) {
+      viewer.entities.remove(visual.entity);
+      effectVisuals.delete(id);
+    }
+  }
+  for (const [id, visual] of svgEffectVisuals) {
+    if (!active.has(id)) {
+      visual.element.remove();
+      svgEffectVisuals.delete(id);
+    }
+  }
+}
+
+function updateEffectOverlay(spec: EffectVisualSpec): void {
+  const existing = svgEffectVisuals.get(spec.id);
+  const needsLine = spec.visualKind === 'line';
+  if (existing && (existing.element instanceof SVGLineElement) !== needsLine) {
+    existing.element.remove();
+    svgEffectVisuals.delete(spec.id);
+  }
+  const current = svgEffectVisuals.get(spec.id);
+  const element = current?.element || document.createElementNS(
+    'http://www.w3.org/2000/svg',
+    needsLine ? 'line' : 'circle',
+  );
+  const cssColor = spec.color.toCssColorString();
+  element.style.color = cssColor;
+  element.setAttribute('stroke', cssColor);
+  if (needsLine) {
+    element.setAttribute('class', 'effect-line');
+  } else {
+    element.setAttribute('class', spec.visualKind === 'area' ? 'effect-area' : 'effect-ring');
+    element.setAttribute('fill', spec.visualKind === 'area' ? cssColor : 'none');
+    element.setAttribute('fill-opacity', spec.visualKind === 'area' ? '0.22' : '0');
+  }
+  if (!current) byId<SVGSVGElement>('effectOverlay').append(element);
+  svgEffectVisuals.set(spec.id, { element, spec });
+}
+
+function screenPosition(position: EntityState['position']): any {
+  return Cesium.SceneTransforms.worldToWindowCoordinates(
+    viewer.scene,
+    Cesium.Cartesian3.fromDegrees(position.lon_deg, position.lat_deg, position.alt_m),
+  );
+}
+
+function syncEffectOverlay(): void {
+  for (const visual of svgEffectVisuals.values()) {
+    const source = screenPosition(visual.spec.position);
+    if (!source) {
+      visual.element.style.display = 'none';
+      continue;
+    }
+    if (visual.element instanceof SVGLineElement) {
+      const target = visual.spec.target && screenPosition(visual.spec.target);
+      if (!target) {
+        visual.element.style.display = 'none';
+        continue;
+      }
+      visual.element.setAttribute('x1', String(source.x));
+      visual.element.setAttribute('y1', String(source.y));
+      visual.element.setAttribute('x2', String(target.x));
+      visual.element.setAttribute('y2', String(target.y));
+    } else {
+      const metersPerLongitudeDegree = Math.max(
+        1,
+        111_320 * Math.cos(Cesium.Math.toRadians(visual.spec.position.lat_deg)),
+      );
+      const edge = screenPosition({
+        ...visual.spec.position,
+        lon_deg: visual.spec.position.lon_deg + visual.spec.radiusM / metersPerLongitudeDegree,
+      });
+      if (!edge) {
+        visual.element.style.display = 'none';
+        continue;
+      }
+      visual.element.setAttribute('cx', String(source.x));
+      visual.element.setAttribute('cy', String(source.y));
+      visual.element.setAttribute('r', String(Math.max(5, Math.hypot(edge.x - source.x, edge.y - source.y))));
+    }
+    visual.element.style.display = '';
+  }
 }
 
 function updateLinks(links: LinkState[], traffic: TrafficState[]): void {
@@ -276,9 +735,9 @@ function formatTime(seconds: number): string {
   return `${mins}:${(seconds % 60).toFixed(1).padStart(4, '0')}`;
 }
 
-function frameScenario(entities: EntityState[]): void {
-  const longitudes = entities.map((entity) => entity.position.lon_deg);
-  const latitudes = entities.map((entity) => entity.position.lat_deg);
+function frameScenario(positions: EntityState['position'][]): void {
+  const longitudes = positions.map((position) => position.lon_deg);
+  const latitudes = positions.map((position) => position.lat_deg);
   const west = Math.min(...longitudes);
   const east = Math.max(...longitudes);
   const south = Math.min(...latitudes);
@@ -295,34 +754,105 @@ function frameScenario(entities: EntityState[]): void {
   });
 }
 
+function clearDynamicVisuals(): void {
+  for (const visual of entityVisuals.values()) {
+    viewer.entities.remove(visual.marker);
+    viewer.entities.remove(visual.trail);
+  }
+  for (const visual of effectVisuals.values()) viewer.entities.remove(visual.entity);
+  for (const visual of linkVisuals.values()) viewer.entities.remove(visual);
+  for (const visual of svgLinkVisuals.values()) visual.line.remove();
+  entityVisuals.clear();
+  effectVisuals.clear();
+  for (const visual of svgEffectVisuals.values()) visual.element.remove();
+  svgEffectVisuals.clear();
+  linkVisuals.clear();
+  svgLinkVisuals.clear();
+  entityPositions.clear();
+  byId<HTMLOListElement>('eventLog').innerHTML = '<li class="muted">No transitions yet</li>';
+  hasFramed = false;
+  lastSequence = -1;
+  lastSimTime = -1;
+  observedScenarioId = null;
+}
+
+function setScenarioHeading(scenarioId: string): void {
+  const matching = scenarios.find((item) => item.id === scenarioId);
+  byId('scenarioName').textContent = (matching?.name || scenarioId).toUpperCase();
+  const description = byId<HTMLElement>('scenarioDescription');
+  description.textContent = matching?.description || '';
+  description.title = matching?.description || '';
+  if (matching) {
+    selectedScenario = matching;
+    byId<HTMLSelectElement>('scenarioSelect').value = matching.id;
+  }
+}
+
+function reconcileScenario(scenarioId: string): void {
+  if (observedScenarioId && observedScenarioId !== scenarioId) clearDynamicVisuals();
+  observedScenarioId = scenarioId;
+  setScenarioHeading(scenarioId);
+}
+
 function handleMessage(value: HelloEnvelope | StateEnvelope): void {
   if (value.schema !== 'autonomy-sim/v1') return;
+  reconcileScenario(value.scenario);
   if (value.message_type === 'hello') {
-    byId('scenarioName').textContent = value.payload.scenario.toUpperCase();
     return;
   }
+  if (value.sequence <= lastSequence) {
+    if (value.sim_time_s >= lastSimTime) return;
+    const scenarioId = value.scenario;
+    clearDynamicVisuals();
+    observedScenarioId = scenarioId;
+    setScenarioHeading(scenarioId);
+  }
+  lastSequence = value.sequence;
+  lastSimTime = value.sim_time_s;
   updateEntities(value.payload.entities);
+  updateEffects(
+    value.payload.entities,
+    value.payload.fire_cells,
+    value.payload.base,
+  );
   updateLinks(value.payload.links, value.payload.traffic);
   updateHud(value);
   if (!hasFramed && value.payload.entities.length) {
     hasFramed = true;
-    frameScenario(value.payload.entities);
+    frameScenario([
+      ...value.payload.entities.map((entity) => entity.position),
+      ...(value.payload.fire_cells || []).map((cell) => cell.position),
+      ...(value.payload.base ? [value.payload.base.position] : []),
+    ]);
   }
 }
 
 function connect(): void {
-  const url = streamUrl();
+  const generation = ++connectionGeneration;
+  window.clearTimeout(reconnectTimer);
+  if (socket) {
+    socket.onclose = null;
+    socket.close();
+  }
+  const url = streamUrl(selectedScenario);
   const indicator = byId('connection');
+  indicator.className = 'connection pending';
+  indicator.innerHTML = '<span></span>CONNECTING';
+  lastSequence = -1;
+  lastSimTime = -1;
   socket = new WebSocket(url);
   socket.onopen = () => {
+    if (generation !== connectionGeneration) return;
     indicator.className = 'connection online';
     indicator.innerHTML = '<span></span>LIVE';
   };
   socket.onmessage = (event) => {
+    if (generation !== connectionGeneration) return;
     try { handleMessage(JSON.parse(event.data)); }
     catch (error) { console.error('Invalid state message', error); }
   };
   socket.onclose = () => {
+    if (generation !== connectionGeneration) return;
     indicator.className = 'connection offline';
     indicator.innerHTML = '<span></span>RECONNECTING';
     window.clearTimeout(reconnectTimer);
@@ -340,16 +870,85 @@ function apiBaseUrl(): URL {
   return new URL(`${protocol}//${authority}`);
 }
 
-function streamUrl(): string {
+function streamUrl(scenario: ScenarioSummary | null = selectedScenario): string {
   const configuredWebSocket = import.meta.env.VITE_WS_URL as string | undefined;
-  if (configuredWebSocket) return configuredWebSocket;
-
-  const url = apiBaseUrl();
+  const url = configuredWebSocket ? new URL(configuredWebSocket, apiBaseUrl()) : apiBaseUrl();
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-  url.pathname = '/api/v1/stream';
+  if (!configuredWebSocket) {
+    url.pathname = '/api/v1/stream';
+    url.search = '';
+  }
+  if (scenario?.id) url.searchParams.set('scenario', scenario.id);
+  url.hash = '';
+  return url.toString();
+}
+
+function scenariosUrl(): string {
+  const url = apiBaseUrl();
+  url.pathname = '/api/v1/scenarios';
   url.search = '';
   url.hash = '';
   return url.toString();
+}
+
+function normalizeScenario(value: unknown): ScenarioSummary | null {
+  if (typeof value === 'string' && value.trim()) {
+    return { id: value, name: value, description: '', entity_count: 0, default: false };
+  }
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, unknown>;
+  const id = typeof record.id === 'string' ? record.id.trim() : '';
+  if (!id) return null;
+  return {
+    id,
+    name: typeof record.name === 'string' && record.name.trim() ? record.name : id,
+    description: typeof record.description === 'string' ? record.description : '',
+    entity_count: typeof record.entity_count === 'number' ? record.entity_count : 0,
+    default: typeof record.default === 'boolean' ? record.default : false,
+  };
+}
+
+async function loadScenarios(): Promise<void> {
+  const select = byId<HTMLSelectElement>('scenarioSelect');
+  try {
+    const response = await fetch(scenariosUrl(), { signal: AbortSignal.timeout(5000) });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const body: unknown = await response.json();
+    const record = body && typeof body === 'object' ? body as Record<string, unknown> : null;
+    const activeScenarioId = typeof record?.active === 'string' ? record.active : undefined;
+    const raw = Array.isArray(body)
+      ? body
+      : record && Array.isArray(record.scenarios)
+        ? record.scenarios
+        : [];
+    scenarios = raw.map(normalizeScenario).filter((item): item is ScenarioSummary => Boolean(item));
+    if (!scenarios.length) throw new Error('server returned no scenarios');
+
+    select.replaceChildren(...scenarios.map((scenario) => {
+      const option = document.createElement('option');
+      option.value = scenario.id;
+      option.textContent = scenario.name;
+      if (scenario.description) option.title = scenario.description;
+      return option;
+    }));
+    const requested = new URL(location.href).searchParams.get('scenario');
+    selectedScenario = scenarios.find((scenario) => scenario.id === requested)
+      || scenarios.find((scenario) => scenario.id === activeScenarioId)
+      || scenarios.find((scenario) => scenario.default)
+      || scenarios[0];
+    select.value = selectedScenario.id;
+    select.disabled = false;
+    setScenarioHeading(selectedScenario.id);
+  } catch (error) {
+    console.warn('Scenario discovery unavailable; connecting to the server default', error);
+    scenarios = [];
+    selectedScenario = null;
+    const option = document.createElement('option');
+    option.textContent = 'SERVER DEFAULT';
+    select.replaceChildren(option);
+    select.disabled = true;
+    byId('scenarioDescription').textContent = 'Scenario catalog unavailable';
+  }
 }
 
 async function show3d(): Promise<void> {
@@ -382,15 +981,28 @@ byId<HTMLButtonElement>('mode3d').addEventListener('click', () => {
   if (googleTiles) googleTiles.show = true;
   void show3d();
 });
+byId<HTMLSelectElement>('scenarioSelect').addEventListener('change', (event) => {
+  const scenarioId = (event.currentTarget as HTMLSelectElement).value;
+  const nextScenario = scenarios.find((scenario) => scenario.id === scenarioId);
+  if (!nextScenario || nextScenario.id === selectedScenario?.id) return;
+  selectedScenario = nextScenario;
+  setScenarioHeading(nextScenario.id);
+  clearDynamicVisuals();
+  connect();
+});
 
-connect();
+void loadScenarios().finally(connect);
 viewer.scene.postRender.addEventListener(syncLinkOverlay);
+viewer.scene.postRender.addEventListener(syncEffectOverlay);
 (window as any).autonomySim = {
   viewer,
   entityVisuals,
+  effectVisuals,
+  svgEffectVisuals,
   linkVisuals,
   svgLinkVisuals,
   apiUrl: apiBaseUrl().toString(),
-  streamUrl: streamUrl(),
+  get streamUrl() { return streamUrl(); },
+  get scenarios() { return scenarios; },
   reconnect: connect,
 };

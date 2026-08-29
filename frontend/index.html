@@ -11,9 +11,19 @@
     <main id="app">
       <div id="cesiumContainer" aria-label="Live autonomy simulation map"></div>
       <svg id="linkOverlay" aria-hidden="true"></svg>
+      <svg id="effectOverlay" aria-hidden="true"></svg>
       <header class="topbar">
         <div class="brand"><span class="brand-mark">A/S</span><span>autonomy-sim</span></div>
-        <div class="mission"><span class="eyebrow">MISSION</span><strong id="scenarioName">CONNECTING</strong></div>
+        <div class="mission">
+          <label class="eyebrow" for="scenarioSelect">SCENARIO</label>
+          <div class="scenario-control">
+            <strong id="scenarioName">CONNECTING</strong>
+            <select id="scenarioSelect" aria-label="Select simulation scenario" disabled>
+              <option>DISCOVERING…</option>
+            </select>
+          </div>
+          <span id="scenarioDescription" class="scenario-description">Waiting for scenario catalog</span>
+        </div>
         <div id="connection" class="connection pending"><span></span>WAITING</div>
       </header>
       <aside class="hud hud-left">
@@ -26,7 +36,14 @@
         <div class="metric"><span>TRAFFIC</span><strong id="trafficRate">0 kbps</strong></div>
       </aside>
       <aside class="hud hud-right">
-        <div class="hud-title">LINK TYPES</div>
+        <div class="hud-title">MIL-STD-2525 AFFILIATION</div>
+        <div class="affiliation-grid" aria-label="MIL-STD-2525 affiliation legend">
+          <span><i class="affiliation-symbol friendly"></i>Friendly</span>
+          <span><i class="affiliation-symbol hostile"></i>Hostile</span>
+          <span><i class="affiliation-symbol neutral"></i>Neutral</span>
+          <span><i class="affiliation-symbol unknown"></i>Unknown</span>
+        </div>
+        <div class="hud-title links-title">LINK TYPES</div>
         <div class="legend"><i class="mesh"></i><span>Mesh</span><b id="meshCount">0</b></div>
         <div class="legend"><i class="cellular"></i><span>Cellular</span><b id="cellularCount">0</b></div>
         <div class="legend"><i class="satcom"></i><span>Satcom</span><b id="satcomCount">0</b></div>

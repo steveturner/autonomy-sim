@@ -11,9 +11,8 @@
 html, body, #app, #cesiumContainer { width: 100%; height: 100%; margin: 0; overflow: hidden; }
 button { font: inherit; }
 
-#linkOverlay {
+#linkOverlay, #effectOverlay {
   position: fixed;
-  z-index: 2;
   inset: 0;
   width: 100%;
   height: 100%;
@@ -21,7 +20,17 @@ button { font: inherit; }
   pointer-events: none;
 }
 
+#linkOverlay { z-index: 2; }
+#effectOverlay { z-index: 3; }
+
 #linkOverlay line { stroke-linecap: round; filter: drop-shadow(0 0 3px currentColor); }
+#effectOverlay * { vector-effect: non-scaling-stroke; }
+#effectOverlay .effect-area { stroke-width: 2px; filter: drop-shadow(0 0 7px currentColor); }
+#effectOverlay .effect-ring { fill: none; stroke-width: 2px; stroke-dasharray: 9 7; transform-box: fill-box; transform-origin: center; animation: effect-pulse 2.2s ease-in-out infinite; filter: drop-shadow(0 0 7px currentColor); }
+#effectOverlay .effect-line { stroke-width: 3px; stroke-dasharray: 11 7; stroke-linecap: round; animation: effect-dash 1s linear infinite; filter: drop-shadow(0 0 5px currentColor); }
+
+@keyframes effect-pulse { 50% { opacity: .42; transform: scale(1.06); } }
+@keyframes effect-dash { to { stroke-dashoffset: -18; } }
 
 #cesiumContainer::after {
   position: fixed;
@@ -51,7 +60,12 @@ button { font: inherit; }
 .brand-mark { display: grid; place-items: center; width: 34px; height: 34px; color: #071015; background: #67e8f9; font-weight: 700; letter-spacing: -.08em; }
 .mission { text-align: center; }
 .eyebrow, .hud-title, .metric span { display: block; color: #76909e; font: 500 10px/1.2 'IBM Plex Mono', monospace; letter-spacing: .16em; }
-.mission strong { font: 600 13px/1.3 'IBM Plex Mono', monospace; letter-spacing: .09em; }
+.scenario-control { display: flex; align-items: center; gap: 9px; margin-top: 3px; }
+.mission strong { max-width: 210px; overflow: hidden; font: 600 12px/1.3 'IBM Plex Mono', monospace; letter-spacing: .07em; text-overflow: ellipsis; white-space: nowrap; }
+.scenario-description { display: block; max-width: 430px; margin: 2px auto 0; overflow: hidden; color: #6f8d9b; font: 500 9px/1.1 'IBM Plex Mono', monospace; text-overflow: ellipsis; white-space: nowrap; }
+.scenario-control select { max-width: 190px; min-width: 120px; padding: 5px 25px 5px 8px; color: #d8f6ff; background: #07141c; border: 1px solid rgba(103, 232, 249, .28); border-radius: 0; cursor: pointer; font: 600 10px 'IBM Plex Mono', monospace; letter-spacing: .04em; text-transform: uppercase; }
+.scenario-control select:focus-visible { outline: 2px solid #67e8f9; outline-offset: 2px; }
+.scenario-control select:disabled { color: #6b8794; cursor: wait; }
 .connection { justify-self: end; display: flex; align-items: center; gap: 8px; font: 600 11px 'IBM Plex Mono', monospace; letter-spacing: .1em; }
 .connection span { width: 7px; height: 7px; border-radius: 50%; background: #fbbf24; box-shadow: 0 0 10px currentColor; }
 .connection.online { color: #4ade80; }
@@ -75,6 +89,14 @@ button { font: inherit; }
 .hud-title { padding-bottom: 11px; margin-bottom: 8px; border-bottom: 1px solid rgba(125, 211, 252, .14); color: #9ec4d5; }
 .metric { display: flex; justify-content: space-between; align-items: baseline; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,.05); }
 .metric strong { font: 500 16px 'IBM Plex Mono', monospace; color: #f2fbff; }
+.affiliation-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 8px; padding: 5px 1px 3px; }
+.affiliation-grid span { display: flex; align-items: center; gap: 8px; color: #b7d3df; font: 500 10px 'IBM Plex Mono', monospace; }
+.affiliation-symbol { display: block; width: 15px; height: 11px; border: 2px solid currentColor; background: color-mix(in srgb, currentColor 22%, transparent); }
+.affiliation-symbol.friendly { color: #38bdf8; }
+.affiliation-symbol.hostile { width: 11px; color: #fb4f5f; transform: rotate(45deg); }
+.affiliation-symbol.neutral { width: 11px; color: #4ade80; }
+.affiliation-symbol.unknown { width: 12px; color: #facc15; border-radius: 50% 50% 42% 42%; }
+.links-title { margin-top: 16px; }
 .legend { display: grid; grid-template-columns: 12px 1fr auto; align-items: center; gap: 10px; padding: 6px 0; font: 500 12px 'IBM Plex Mono', monospace; }
 .legend i { display: block; width: 12px; height: 2px; box-shadow: 0 0 8px currentColor; }
 .legend i.mesh { color: #22d3ee; background: #22d3ee; }
@@ -111,8 +133,9 @@ button { font: inherit; }
 .cesium-viewer-toolbar, .cesium-viewer-animationContainer, .cesium-viewer-timelineContainer, .cesium-viewer-bottom { display: none !important; }
 
 @media (max-width: 760px) {
-  .topbar { grid-template-columns: 1fr auto; padding: 0 12px; }
-  .mission { display: none; }
+  .topbar { grid-template-columns: auto 1fr auto; gap: 10px; padding: 0 12px; }
+  .brand > span:last-child, .mission strong, .scenario-description { display: none; }
+  .scenario-control select { width: min(36vw, 170px); min-width: 0; }
   .hud { top: 76px; }
   .hud-left { left: 12px; width: 180px; }
   .hud-right { display: none; }
