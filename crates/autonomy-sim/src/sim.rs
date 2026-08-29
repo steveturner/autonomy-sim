@@ -26,6 +26,7 @@ struct Agent {
 }
 
 pub struct Simulation {
+    options: SimulationOptions,
     scenario_name: String,
     tick_hz: f64,
     sequence: u64,
@@ -157,6 +158,7 @@ impl Simulation {
         }
 
         Ok(Self {
+            options: options.clone(),
             scenario_name: config.scenario.name.clone(),
             tick_hz: config.simulation.tick_hz,
             sequence: 0,
@@ -185,6 +187,10 @@ impl Simulation {
 
     pub fn uses_real_ditto(&self) -> bool {
         self.ditto.is_real()
+    }
+
+    pub(crate) fn options(&self) -> &SimulationOptions {
+        &self.options
     }
 
     pub fn snapshot(&mut self) -> Result<StateEnvelope> {

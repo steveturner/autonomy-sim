@@ -81,7 +81,6 @@ async fn main() -> Result<()> {
         Simulation::try_new_with_options(&config, &options)?,
         bind,
         registry,
-        options,
     )
     .await
 }

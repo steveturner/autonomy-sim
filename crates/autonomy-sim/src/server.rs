@@ -17,7 +17,7 @@ use tokio::sync::{Mutex, RwLock, broadcast};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 use crate::{
-    Simulation, SimulationOptions,
+    Simulation,
     scenario::{ScenarioDescriptor, ScenarioRegistry},
     wire::{HelloEnvelope, HelloPayload, SCHEMA, StateEnvelope},
 };
@@ -36,7 +36,6 @@ pub struct AppState {
     updates: broadcast::Sender<String>,
     scenarios: Arc<Vec<ScenarioDescriptor>>,
     registry: ScenarioRegistry,
-    simulation_options: SimulationOptions,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -69,7 +68,6 @@ pub async fn run(
     mut simulation: Simulation,
     bind: SocketAddr,
     registry: ScenarioRegistry,
-    simulation_options: SimulationOptions,
 ) -> Result<()> {
     let initial = simulation.snapshot()?;
     let active = ActiveScenario {
@@ -85,7 +83,6 @@ pub async fn run(
         updates,
         scenarios: Arc::new(scenarios),
         registry,
-        simulation_options,
     };
 
     let producer_state = state.clone();
@@ -179,14 +176,17 @@ async fn select_scenario(state: &AppState, scenario_id: &str) -> Result<(), ApiE
             message: "hot scenario switching is unavailable with --ditto real; restart with --scenario to release native peer ports and stores".into(),
         });
     }
+    let simulation_options = state.simulation.lock().await.options().clone();
     let config = state.registry.load(scenario_id).map_err(|error| ApiError {
         status: StatusCode::BAD_REQUEST,
         message: error.to_string(),
     })?;
-    let mut replacement = Simulation::try_new_with_options(&config, &state.simulation_options)
-        .map_err(|error| ApiError {
-            status: StatusCode::BAD_REQUEST,
-            message: error.to_string(),
+    let mut replacement =
+        Simulation::try_new_with_options(&config, &simulation_options).map_err(|error| {
+            ApiError {
+                status: StatusCode::BAD_REQUEST,
+                message: error.to_string(),
+            }
         })?;
     let initial = replacement.snapshot().map_err(|error| ApiError {
         status: StatusCode::INTERNAL_SERVER_ERROR,
@@ -282,7 +282,6 @@ mod tests {
             updates,
             scenarios: Arc::new(registry.descriptors().unwrap()),
             registry,
-            simulation_options: SimulationOptions::default(),
         }
     }
 
