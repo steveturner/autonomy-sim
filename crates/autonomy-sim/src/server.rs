@@ -170,14 +170,24 @@ async fn select_scenario(state: &AppState, scenario_id: &str) -> Result<(), ApiE
     if state.active.read().await.id == scenario_id {
         return Ok(());
     }
+    if state.simulation.lock().await.uses_real_ditto() {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            message: "hot scenario switching is unavailable with --ditto real; restart with --scenario to release native peer ports and stores".into(),
+        });
+    }
+    let simulation_options = state.simulation.lock().await.options().clone();
     let config = state.registry.load(scenario_id).map_err(|error| ApiError {
         status: StatusCode::BAD_REQUEST,
         message: error.to_string(),
     })?;
-    let mut replacement = Simulation::try_new(&config).map_err(|error| ApiError {
-        status: StatusCode::BAD_REQUEST,
-        message: error.to_string(),
-    })?;
+    let mut replacement =
+        Simulation::try_new_with_options(&config, &simulation_options).map_err(|error| {
+            ApiError {
+                status: StatusCode::BAD_REQUEST,
+                message: error.to_string(),
+            }
+        })?;
     let initial = replacement.snapshot().map_err(|error| ApiError {
         status: StatusCode::INTERNAL_SERVER_ERROR,
         message: error.to_string(),

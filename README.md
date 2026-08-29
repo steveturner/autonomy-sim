@@ -1,6 +1,6 @@
 # autonomy-sim
 
-Phase 1 prototype of a defensive autonomy, mission, Ditto-first C2/TAK, and visualization layer for uncrewed-system simulation. It runs locally with a deterministic analytic network model; CORE, EMANE, SigForge, a native `dittoffi` runtime, Cesium ion, and a TAK server are not required.
+Phase 1 prototype of a defensive autonomy, mission, Ditto-first C2/TAK, and visualization layer for uncrewed-system simulation. It runs locally with a deterministic analytic network model; CORE, EMANE, SigForge, a native `dittoffi` runtime, Cesium ion, and a TAK server are not required. Optional crates add a SigForge REST network backend and real Ditto small-peer transport without changing that default.
 
 The included ISR scenario drives two drones, two people, a relay rover, and a C2 gateway. Every platform is a behavioral Ditto peer. C2 tasking, PLI, tracks, and telemetry are replicated documents that persist across partitions and converge peer-to-peer when links return. As platforms move, those Ditto peer links appear and drop across mesh, cellular, satcom, and BLE carriers.
 
@@ -142,6 +142,8 @@ waypoints = [
 ]
 ```
 
+The analytic network and behavioral Ditto transport remain the defaults. Override them independently at startup with `--network-backend analytic|sigforge` and `--ditto behavioral|real`; `make demo-sigforge` and `make demo-ditto-real` provide the corresponding runnable entry points.
+
 Registered scenario names can be passed without a path, for example `cargo run -- --scenario wildfire-paradise`. Kinds are `uas`, `air_tanker`, `rotary`, `person`, `ground_vehicle`, `base`, `fire`, `waypoint`, `threat_uas`, `radar_sensor`, `ew_jammer`, `interceptor`, `gun_system`, and `protected_site`; domains are `ground`, `air`, `maritime`, and `space`. Radios use `mesh`, `cellular`, `satcom`, or `ble`. Standard playbooks are `hold`, `area_search`, `persistent_surveillance`, and `comms_relay`; the `wildfire` builder adds `firefighting`. Invalid scenarios fail before the server binds.
 
 Run another scenario or override the API address directly:
@@ -183,6 +185,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 npm --prefix frontend run build
 ```
 
+The opt-in native Ditto build, real-peer tests/demo, SigForge API mapping, and current integration boundaries are documented in [docs/real-ditto-sigforge.md](docs/real-ditto-sigforge.md).
+
 ## Phase 1 status
 
 Implemented:
@@ -192,14 +196,15 @@ Implemented:
 - Auditable sequence, fallback, and parallel behavior trees with ISR/coverage/relay playbooks.
 - `NetworkBackend` and `PropagationModel` traits, outdoor analytic networking, four carrier types, transition events, quality/loss/latency/capacity, and deterministic Ditto replication traffic.
 - A behavioral Ditto model with one peer per entity, `c2.tasking`, `c2.pli`, `c2.tracks`, and `telemetry.platform` collections, bounded per-link document propagation, offline persistence, and eventual convergence after reconnect.
+- An opt-in native `dittoffi` transport selected with `--ditto real`, with one real small peer and persistent store per entity, real DQL collection writes/subscriptions, explicit-TCP reachability controlled by current `NetworkBackend` links, and process-level convergence/partition integration tests.
+- A dependency-light SigForge REST `NetworkBackend` adapter selected by scenario config or `--network-backend sigforge`, which publishes entity positions, consumes directed per-link SINR, and maps bidirectional PHY state into autonomy-sim link status and metrics behind a mockable API boundary.
 - Axum REST snapshot and Tokio WebSocket state streamer using the documented v1 contract and CZML-compatible packets.
 - A Ditto-to-CoT gateway with PLI/track XML and file, UDP, and TCP sinks.
 - CesiumJS 2D and 3D modes, platform tracks, live link reconciliation, transport styling, traffic indication, and optional Google Photorealistic 3D Tiles.
 
 Stubbed or deferred:
 
-- The `SigForgeBackend` is an explicit trait implementation that fails closed with integration guidance; real SigForge API/WebSocket/PHY integration is Phase 2.
-- Native Ditto small-peer/`dittoffi` nodes over SigForge/CORE-EMANE are Phase 2; Phase 1 models CRDT convergence behavior rather than running the production Ditto engine.
+- Native Ditto link gating currently controls reachability. Packet-level shaping of Ditto traffic by SigForge/CORE-EMANE latency, loss, and capacity is deferred.
 - TAK-to-Ditto ingest and production TAK Server certificate handling are Phase 2.
 - Analytic traffic is a deterministic document-operation aggregate, not a Ditto packet capture.
 - Terrain/LOS, indoor body blocking, urban propagation, and ns-3 are later `PropagationModel` implementations.

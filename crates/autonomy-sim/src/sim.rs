@@ -6,7 +6,8 @@ use chrono::Utc;
 use crate::{
     behavior::BehaviorRuntime,
     cot::{CotSink, render_pli, sink_from_config},
-    ditto::{DittoFrame, DittoModel, PLI_COLLECTION, TRACKS_COLLECTION},
+    ditto::{DittoFrame, PLI_COLLECTION, TRACKS_COLLECTION},
+    ditto_transport::{DittoRuntime, DittoTransportConfig},
     model::{Entity, EntityKind, Kinematics, MissionState, MissionStatus, Position},
     network::{
         AnalyticNetworkBackend, LinkState, NetworkBackend, SigForgeBackend, derive_link_events,
@@ -25,6 +26,7 @@ struct Agent {
 }
 
 pub struct Simulation {
+    options: SimulationOptions,
     scenario_name: String,
     tick_hz: f64,
     sequence: u64,
@@ -32,7 +34,7 @@ pub struct Simulation {
     agents: Vec<Agent>,
     network: Box<dyn NetworkBackend>,
     previous_links: Vec<LinkState>,
-    ditto: DittoModel,
+    ditto: DittoRuntime,
     gateway_entity_id: String,
     cot_sink: Box<dyn CotSink>,
     cot_interval_ticks: u64,
@@ -40,8 +42,28 @@ pub struct Simulation {
     wildfire: Option<WildfireRuntime>,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct SimulationOptions {
+    pub ditto: DittoTransportConfig,
+    /// Overrides the scenario's network backend when supplied by the caller.
+    pub network: Option<NetworkBackendSelection>,
+}
+
+#[derive(Clone, Debug)]
+pub enum NetworkBackendSelection {
+    Analytic,
+    SigForge { base_url: String },
+}
+
 impl Simulation {
     pub fn try_new(config: &ScenarioConfig) -> Result<Self> {
+        Self::try_new_with_options(config, &SimulationOptions::default())
+    }
+
+    pub fn try_new_with_options(
+        config: &ScenarioConfig,
+        options: &SimulationOptions,
+    ) -> Result<Self> {
         let mut agents: Vec<_> = config
             .nodes
             .iter()
@@ -111,10 +133,15 @@ impl Simulation {
                 behavior: BehaviorRuntime::for_playbook("hold"),
             }));
         }
-        let mut network: Box<dyn NetworkBackend> = match config.simulation.network_backend.as_str()
-        {
-            "sigforge" => Box::new(SigForgeBackend::new(&config.simulation.sigforge_url)),
-            _ => Box::new(AnalyticNetworkBackend::default()),
+        let mut network: Box<dyn NetworkBackend> = match &options.network {
+            Some(NetworkBackendSelection::Analytic) => Box::new(AnalyticNetworkBackend::default()),
+            Some(NetworkBackendSelection::SigForge { base_url }) => {
+                Box::new(SigForgeBackend::connect(base_url)?)
+            }
+            None => match config.simulation.network_backend.as_str() {
+                "sigforge" => Box::new(SigForgeBackend::connect(&config.simulation.sigforge_url)?),
+                _ => Box::new(AnalyticNetworkBackend::default()),
+            },
         };
         let entities: Vec<_> = agents.iter().map(|agent| agent.entity.clone()).collect();
         let gateway_entity_id = entities
@@ -125,12 +152,13 @@ impl Simulation {
             .ok_or_else(|| anyhow::anyhow!("scenario requires at least one node"))?;
         network.register_nodes(&entities)?;
         tracing::info!(backend = network.name(), "network backend initialized");
-        let ditto = DittoModel::new(
+        let ditto = DittoRuntime::new(
             &entities,
             &gateway_entity_id,
             &config.scenario.name,
             config.simulation.tick_hz,
-        );
+            &options.ditto,
+        )?;
         let mut wildfire = config
             .wildfire
             .as_ref()
@@ -143,6 +171,7 @@ impl Simulation {
         }
 
         Ok(Self {
+            options: options.clone(),
             scenario_name: config.scenario.name.clone(),
             tick_hz: config.simulation.tick_hz,
             sequence: 0,
@@ -167,6 +196,14 @@ impl Simulation {
 
     pub fn tick_hz(&self) -> f64 {
         self.tick_hz
+    }
+
+    pub fn uses_real_ditto(&self) -> bool {
+        self.ditto.is_real()
+    }
+
+    pub(crate) fn options(&self) -> &SimulationOptions {
+        &self.options
     }
 
     pub fn snapshot(&mut self) -> Result<StateEnvelope> {
@@ -264,12 +301,9 @@ impl Simulation {
             .map(|link| (link.id.clone(), link.state))
             .collect();
         let link_events = derive_link_events(&previous, &links, self.sim_time_s);
-        let ditto = if advance {
-            self.ditto
-                .tick(self.sequence, self.sim_time_s, &entities, &links)
-        } else {
-            self.ditto.snapshot(&links)
-        };
+        let ditto = self
+            .ditto
+            .frame(advance, self.sequence, self.sim_time_s, &entities, &links)?;
         let traffic = ditto_traffic(
             &links,
             self.sequence,
@@ -286,12 +320,12 @@ impl Simulation {
                     &self.gateway_entity_id,
                     PLI_COLLECTION,
                     &format!("pli/{}", entity.id),
-                );
+                )?;
                 let has_track = self.ditto.peer_has_latest(
                     &self.gateway_entity_id,
                     TRACKS_COLLECTION,
                     &format!("track/{}", entity.id),
-                );
+                )?;
                 if !has_pli || !has_track {
                     continue;
                 }
@@ -442,5 +476,19 @@ mod tests {
         let frame = simulation.tick().unwrap();
         assert!(frame.payload.ditto_documents.len() >= 7);
         assert!(!frame.payload.ditto_replication_events.is_empty());
+    }
+
+    #[test]
+    fn explicit_analytic_backend_overrides_scenario_sigforge_selection() {
+        let mut config = config();
+        config.simulation.network_backend = "sigforge".into();
+        config.simulation.sigforge_url = "http://127.0.0.1:1".into();
+        let options = SimulationOptions {
+            network: Some(NetworkBackendSelection::Analytic),
+            ..SimulationOptions::default()
+        };
+
+        let mut simulation = Simulation::try_new_with_options(&config, &options).unwrap();
+        assert_eq!(simulation.snapshot().unwrap().payload.links.len(), 1);
     }
 }
