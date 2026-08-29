@@ -924,6 +924,8 @@ function normalizeScenario(value: unknown): ScenarioSummary | null {
     id,
     name: String(record.display_name || record.title || record.name || id),
     description: typeof record.description === 'string' ? record.description : undefined,
+    entity_count: typeof record.entity_count === 'number' ? record.entity_count : undefined,
+    default: typeof record.default === 'boolean' ? record.default : undefined,
     builder: typeof record.builder === 'string' ? record.builder : undefined,
     stream_url: typeof record.stream_url === 'string'
       ? record.stream_url
@@ -937,10 +939,12 @@ async function loadScenarios(): Promise<void> {
     const response = await fetch(scenariosUrl(), { signal: AbortSignal.timeout(5000) });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const body: unknown = await response.json();
+    const record = body && typeof body === 'object' ? body as Record<string, unknown> : null;
+    const activeScenarioId = typeof record?.active === 'string' ? record.active : undefined;
     const raw = Array.isArray(body)
       ? body
-      : body && typeof body === 'object' && Array.isArray((body as Record<string, unknown>).scenarios)
-        ? (body as { scenarios: unknown[] }).scenarios
+      : record && Array.isArray(record.scenarios)
+        ? record.scenarios
         : [];
     scenarios = raw.map(normalizeScenario).filter((item): item is ScenarioSummary => Boolean(item));
     if (!scenarios.length) throw new Error('server returned no scenarios');
@@ -953,7 +957,10 @@ async function loadScenarios(): Promise<void> {
       return option;
     }));
     const requested = new URL(location.href).searchParams.get('scenario');
-    selectedScenario = scenarios.find((scenario) => scenario.id === requested) || scenarios[0];
+    selectedScenario = scenarios.find((scenario) => scenario.id === requested)
+      || scenarios.find((scenario) => scenario.id === activeScenarioId)
+      || scenarios.find((scenario) => scenario.default)
+      || scenarios[0];
     select.value = selectedScenario.id;
     select.disabled = false;
     setScenarioHeading(selectedScenario.name);
