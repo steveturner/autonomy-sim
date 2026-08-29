@@ -5,17 +5,12 @@ use std::{
     ptr::{self, NonNull},
 };
 
-use autonomy_sim::{
-    ditto::peer_id,
-    model::Entity,
-    network::{LinkState, LinkStatus},
-};
 use serde_json::{Value, json};
 use thiserror::Error;
 
 use crate::{
-    AUTONOMY_COLLECTIONS, RealDittoConfig, RealDittoDocumentObservation, RealDittoObservation,
-    RealDittoPeerObservation,
+    AUTONOMY_COLLECTIONS, RealDittoConfig, RealDittoDocumentObservation, RealDittoEntity,
+    RealDittoLink, RealDittoObservation, RealDittoPeerObservation,
 };
 
 #[derive(Debug, Error)]
@@ -79,6 +74,11 @@ unsafe extern "C" {
 }
 
 struct RawPeer(NonNull<c_void>);
+
+// SAFETY: the Ditto SDK owns its internal synchronization and the bridge peer
+// is only accessed through the owning transport. `Send` permits moving that
+// owner between executor threads; it does not permit concurrent access.
+unsafe impl Send for RawPeer {}
 
 impl RawPeer {
     fn open(
@@ -229,7 +229,10 @@ pub struct RealDittoTransport {
 }
 
 impl RealDittoTransport {
-    pub fn new(entities: &[Entity], config: RealDittoConfig) -> Result<Self, RealDittoError> {
+    pub fn new(
+        entities: &[RealDittoEntity],
+        config: RealDittoConfig,
+    ) -> Result<Self, RealDittoError> {
         if entities.is_empty() {
             return Err(RealDittoError::InvalidConfig(
                 "at least one peer entity is required".into(),
@@ -257,15 +260,16 @@ impl RealDittoTransport {
         let mut peers = BTreeMap::new();
 
         for (index, entity) in entities.iter().enumerate() {
-            if peers.contains_key(&entity.id) {
+            if peers.contains_key(&entity.entity_id) {
                 return Err(RealDittoError::InvalidConfig(format!(
                     "duplicate entity ID '{}'",
-                    entity.id
+                    entity.entity_id
                 )));
             }
-            let storage = config
-                .storage_root
-                .join(format!("{index:04}-{}", safe_path_segment(&entity.id)));
+            let storage = config.storage_root.join(format!(
+                "{index:04}-{}",
+                safe_path_segment(&entity.entity_id)
+            ));
             fs::create_dir_all(&storage)?;
             let storage = CString::new(storage.to_string_lossy().as_bytes())?;
             let raw = RawPeer::open(&storage, &database_id, &license)?;
@@ -276,10 +280,10 @@ impl RealDittoTransport {
             raw.set_transport(&transport_config(&config.listen_ip, port, &[])?)?;
             raw.start()?;
             peers.insert(
-                entity.id.clone(),
+                entity.entity_id.clone(),
                 Peer {
-                    entity_id: entity.id.clone(),
-                    peer_id: peer_id(&entity.id),
+                    entity_id: entity.entity_id.clone(),
+                    peer_id: entity.peer_id.clone(),
                     port,
                     raw,
                 },
@@ -300,16 +304,16 @@ impl RealDittoTransport {
     /// Applies the current emulated link matrix to Ditto's explicit TCP
     /// transport. Multiple up carriers between the same peers produce one
     /// transport connection; removing the last carrier tears it down.
-    pub fn apply_links(&mut self, links: &[LinkState]) -> Result<(), RealDittoError> {
+    pub fn apply_links(&mut self, links: &[RealDittoLink]) -> Result<(), RealDittoError> {
         let mut active_pairs = BTreeSet::new();
-        for link in links.iter().filter(|link| link.state == LinkStatus::Up) {
-            if !self.peers.contains_key(&link.source) {
-                return Err(RealDittoError::UnknownEntity(link.source.clone()));
+        for link in links.iter().filter(|link| link.up) {
+            if !self.peers.contains_key(&link.source_entity_id) {
+                return Err(RealDittoError::UnknownEntity(link.source_entity_id.clone()));
             }
-            if !self.peers.contains_key(&link.target) {
-                return Err(RealDittoError::UnknownEntity(link.target.clone()));
+            if !self.peers.contains_key(&link.target_entity_id) {
+                return Err(RealDittoError::UnknownEntity(link.target_entity_id.clone()));
             }
-            active_pairs.insert(sorted_pair(&link.source, &link.target));
+            active_pairs.insert(sorted_pair(&link.source_entity_id, &link.target_entity_id));
         }
         if active_pairs == self.active_pairs {
             return Ok(());
@@ -388,7 +392,7 @@ impl RealDittoTransport {
 
     /// Reads real collection contents back from every peer for visualization
     /// and convergence reporting.
-    pub fn observe(&self, links: &[LinkState]) -> Result<RealDittoObservation, RealDittoError> {
+    pub fn observe(&self, links: &[RealDittoLink]) -> Result<RealDittoObservation, RealDittoError> {
         let connected = connected_peers(links);
         let mut peer_documents: BTreeMap<String, BTreeMap<(String, String), Value>> =
             BTreeMap::new();
@@ -533,9 +537,9 @@ fn safe_path_segment(value: &str) -> String {
         .collect()
 }
 
-fn connected_peers(links: &[LinkState]) -> BTreeMap<String, Vec<String>> {
+fn connected_peers(links: &[RealDittoLink]) -> BTreeMap<String, Vec<String>> {
     let mut connected: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for link in links.iter().filter(|link| link.state == LinkStatus::Up) {
+    for link in links.iter().filter(|link| link.up) {
         connected
             .entry(link.source_peer_id.clone())
             .or_default()

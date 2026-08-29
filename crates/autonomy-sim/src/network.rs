@@ -240,51 +240,7 @@ impl NetworkBackend for AnalyticNetworkBackend {
     }
 }
 
-/// Phase 1 proof of the SigForge seam.
-///
-/// A Phase 2 implementation will POST node registrations to SigForge's
-/// `/api/v1/session`, publish WGS84 location updates, and consume its `/sim`
-/// WebSocket link matrix. This stub fails closed rather than silently
-/// substituting analytic results.
-pub struct SigForgeBackend {
-    pub base_url: String,
-    entity_to_nem: BTreeMap<String, u16>,
-}
-
-impl SigForgeBackend {
-    pub fn new(base_url: impl Into<String>) -> Self {
-        Self {
-            base_url: base_url.into(),
-            entity_to_nem: BTreeMap::new(),
-        }
-    }
-}
-
-impl NetworkBackend for SigForgeBackend {
-    fn name(&self) -> &'static str {
-        "sigforge-stub"
-    }
-
-    fn register_nodes(&mut self, entities: &[Entity]) -> Result<(), NetworkError> {
-        self.entity_to_nem = entities
-            .iter()
-            .enumerate()
-            .map(|(index, entity)| (entity.id.clone(), (index + 1) as u16))
-            .collect();
-        Ok(())
-    }
-
-    fn link_states(
-        &mut self,
-        _sim_time_s: f64,
-        _entities: &[Entity],
-    ) -> Result<Vec<LinkState>, NetworkError> {
-        Err(NetworkError::Unavailable(format!(
-            "SigForge adapter at {} is a Phase 2 stub; use network_backend = 'analytic'",
-            self.base_url
-        )))
-    }
-}
+pub use crate::sigforge::SigForgeNetworkBackend as SigForgeBackend;
 
 pub fn derive_link_events(
     previous: &BTreeMap<String, LinkStatus>,

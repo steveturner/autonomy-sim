@@ -93,6 +93,7 @@ name = "autonomy-sim"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "autonomy-sim-ditto-real",
  "axum",
  "chrono",
  "clap",
@@ -100,6 +101,7 @@ dependencies = [
  "quick-xml",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
  "tokio",
  "toml",
@@ -112,7 +114,6 @@ dependencies = [
 name = "autonomy-sim-ditto-real"
 version = "0.1.0"
 dependencies = [
- "autonomy-sim",
  "cc",
  "serde",
  "serde_cbor",
