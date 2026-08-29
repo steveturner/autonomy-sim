@@ -90,13 +90,13 @@ impl DittoRuntime {
                     let storage_root = options.storage_root.join(safe_segment(scenario_name));
                     let transport = autonomy_sim_ditto_real::RealDittoTransport::new(
                         &peers,
-                        autonomy_sim_ditto_real::RealDittoConfig {
-                            database_id: options.database_id.clone(),
-                            license: options.license.clone(),
+                        autonomy_sim_ditto_real::RealDittoConfig::new(
+                            options.database_id.clone(),
+                            options.license.clone(),
                             storage_root,
-                            port_base: options.port_base,
-                            listen_ip: options.listen_ip.clone(),
-                        },
+                            options.port_base,
+                            options.listen_ip.clone(),
+                        ),
                     )?;
                     Ok(Self {
                         model,

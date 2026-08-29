@@ -28,6 +28,14 @@ pub const AUTONOMY_COLLECTIONS: [&str; 7] = [
     DROP_ASSIGNMENTS_COLLECTION,
 ];
 
+/// The collections used by the existing ISR and wildfire scenarios.
+pub fn default_collections() -> Vec<String> {
+    AUTONOMY_COLLECTIONS
+        .iter()
+        .map(|value| (*value).into())
+        .collect()
+}
+
 /// Cycle-free peer descriptor supplied by the simulator integration layer.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct RealDittoEntity {
@@ -57,6 +65,62 @@ pub struct RealDittoConfig {
     pub port_base: u16,
     /// Interface used by explicit Ditto TCP listeners and connections.
     pub listen_ip: String,
+    /// Collections subscribed, accepted by read/write, and returned by observation.
+    pub collections: Vec<String>,
+}
+
+impl RealDittoConfig {
+    /// Constructs a configuration with the existing autonomy collection set.
+    pub fn new(
+        database_id: String,
+        license: String,
+        storage_root: PathBuf,
+        port_base: u16,
+        listen_ip: String,
+    ) -> Self {
+        Self {
+            database_id,
+            license,
+            storage_root,
+            port_base,
+            listen_ip,
+            collections: default_collections(),
+        }
+    }
+
+    /// Replaces the subscribed collection set for a scenario integration.
+    pub fn with_collections<I, S>(mut self, collections: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.collections = collections.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Adds scenario-specific collections while retaining the defaults.
+    pub fn with_additional_collections<I, S>(mut self, collections: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        for collection in collections {
+            let collection = collection.into();
+            if !self.collections.contains(&collection) {
+                self.collections.push(collection);
+            }
+        }
+        self
+    }
+}
+
+#[cfg(any(feature = "dittoffi", test))]
+pub(crate) fn valid_collection_name(collection: &str) -> bool {
+    !collection.is_empty()
+        && collection == collection.trim()
+        && !collection
+            .chars()
+            .any(|character| character == '`' || character.is_control())
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -91,3 +155,56 @@ mod enabled;
 
 #[cfg(feature = "dittoffi")]
 pub use enabled::{RealDittoError, RealDittoTransport};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn constructor_uses_existing_collection_contract() {
+        let config = RealDittoConfig::new(
+            "database".into(),
+            "license".into(),
+            PathBuf::from("storage"),
+            46_000,
+            "127.0.0.1".into(),
+        );
+
+        assert_eq!(config.collections, default_collections());
+    }
+
+    #[test]
+    fn collection_names_are_safe_for_quoted_dql() {
+        assert!(valid_collection_name("cuas.ew_assignments"));
+        assert!(!valid_collection_name(""));
+        assert!(!valid_collection_name("cuas.`injected"));
+        assert!(!valid_collection_name(" leading-space"));
+    }
+
+    #[test]
+    fn scenario_collections_extend_defaults_without_duplicates() {
+        let config = RealDittoConfig::new(
+            "database".into(),
+            "license".into(),
+            PathBuf::from("storage"),
+            46_000,
+            "127.0.0.1".into(),
+        )
+        .with_additional_collections(["cuas.tracks", TASKING_COLLECTION]);
+
+        assert!(
+            config
+                .collections
+                .iter()
+                .any(|value| value == "cuas.tracks")
+        );
+        assert_eq!(
+            config
+                .collections
+                .iter()
+                .filter(|value| value.as_str() == TASKING_COLLECTION)
+                .count(),
+            1
+        );
+    }
+}

@@ -9,8 +9,8 @@ use serde_json::{Value, json};
 use thiserror::Error;
 
 use crate::{
-    AUTONOMY_COLLECTIONS, RealDittoConfig, RealDittoDocumentObservation, RealDittoEntity,
-    RealDittoLink, RealDittoObservation, RealDittoPeerObservation,
+    RealDittoConfig, RealDittoDocumentObservation, RealDittoEntity, RealDittoLink,
+    RealDittoObservation, RealDittoPeerObservation, valid_collection_name,
 };
 
 #[derive(Debug, Error)]
@@ -248,6 +248,24 @@ impl RealDittoTransport {
                 "license must not be empty".into(),
             ));
         }
+        if config.collections.is_empty() {
+            return Err(RealDittoError::InvalidConfig(
+                "at least one collection is required".into(),
+            ));
+        }
+        let mut unique_collections = BTreeSet::new();
+        for collection in &config.collections {
+            if !valid_collection_name(collection) {
+                return Err(RealDittoError::InvalidConfig(format!(
+                    "collection name '{collection}' is empty or unsafe for DQL"
+                )));
+            }
+            if !unique_collections.insert(collection) {
+                return Err(RealDittoError::InvalidConfig(format!(
+                    "duplicate collection '{collection}'"
+                )));
+            }
+        }
         let last_port = usize::from(config.port_base) + entities.len() - 1;
         if last_port > usize::from(u16::MAX) {
             return Err(RealDittoError::InvalidConfig(
@@ -273,7 +291,7 @@ impl RealDittoTransport {
             fs::create_dir_all(&storage)?;
             let storage = CString::new(storage.to_string_lossy().as_bytes())?;
             let raw = RawPeer::open(&storage, &database_id, &license)?;
-            for collection in AUTONOMY_COLLECTIONS {
+            for collection in &config.collections {
                 raw.subscribe(&CString::new(format!("SELECT * FROM `{collection}`"))?)?;
             }
             let port = config.port_base + index as u16;
@@ -352,7 +370,7 @@ impl RealDittoTransport {
         value: Value,
         sim_time_s: f64,
     ) -> Result<(), RealDittoError> {
-        validate_collection(collection)?;
+        self.validate_collection(collection)?;
         let peer = self
             .peers
             .get(entity_id)
@@ -380,7 +398,7 @@ impl RealDittoTransport {
         collection: &str,
         document_id: &str,
     ) -> Result<Option<Value>, RealDittoError> {
-        validate_collection(collection)?;
+        self.validate_collection(collection)?;
         let peer = self
             .peers
             .get(entity_id)
@@ -398,13 +416,13 @@ impl RealDittoTransport {
             BTreeMap::new();
         for peer in self.peers.values() {
             let mut documents = BTreeMap::new();
-            for collection in AUTONOMY_COLLECTIONS {
+            for collection in &self.config.collections {
                 let query = CString::new(format!("SELECT * FROM `{collection}`"))?;
                 for document in peer.raw.query(&query, &[])? {
                     let Some(document_id) = document.get("_id").and_then(Value::as_str) else {
                         continue;
                     };
-                    documents.insert((collection.into(), document_id.into()), document);
+                    documents.insert((collection.clone(), document_id.into()), document);
                 }
             }
             peer_documents.insert(peer.entity_id.clone(), documents);
@@ -480,13 +498,18 @@ impl RealDittoTransport {
             .collect();
         Ok(RealDittoObservation { peers, documents })
     }
-}
 
-fn validate_collection(collection: &str) -> Result<(), RealDittoError> {
-    if AUTONOMY_COLLECTIONS.contains(&collection) {
-        Ok(())
-    } else {
-        Err(RealDittoError::InvalidCollection(collection.into()))
+    fn validate_collection(&self, collection: &str) -> Result<(), RealDittoError> {
+        if self
+            .config
+            .collections
+            .iter()
+            .any(|configured| configured == collection)
+        {
+            Ok(())
+        } else {
+            Err(RealDittoError::InvalidCollection(collection.into()))
+        }
     }
 }
 

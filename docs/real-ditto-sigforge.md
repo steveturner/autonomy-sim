@@ -62,7 +62,29 @@ env -u NO_COLOR cargo run -p autonomy-sim --features ditto-real -- --ditto real
 
 ### Transport behavior
 
-`RealDittoTransport::new` creates a persistent Ditto peer for every supplied peer entity, subscribes it to the C2, telemetry, and mission-coordination collections, and disables ambient discovery transports. Each peer listens on an explicit TCP port.
+`RealDittoTransport::new` creates a persistent Ditto peer for every supplied peer entity, subscribes it to every collection in `RealDittoConfig::collections`, and disables ambient discovery transports. Each peer listens on an explicit TCP port. `RealDittoConfig::new` defaults to the existing ISR and wildfire collection contract (`AUTONOMY_COLLECTIONS`), so existing scenarios are unchanged.
+
+Scenario integrations can extend that set before constructing the transport. The configured set controls subscriptions, `write_document`/`read_document` validation, and the collections scanned by `observe`:
+
+```rust
+use autonomy_sim_ditto_real::{RealDittoConfig, RealDittoTransport};
+
+let config = RealDittoConfig::new(
+    database_id,
+    license,
+    storage_root,
+    46_000,
+    "127.0.0.1".into(),
+)
+.with_additional_collections([
+    "cuas.tracks",
+    "cuas.ew_assignments",
+    "cuas.engagements",
+]);
+let transport = RealDittoTransport::new(&peer_entities, config)?;
+```
+
+Use `with_collections` instead when a scenario intentionally needs a complete replacement. Empty, duplicate, control-character, and backtick-containing collection names are rejected before any peer is opened.
 
 The simulator converts each current `NetworkBackend::link_states` frame into `apply_links` input. Every entity pair with at least one `Up` carrier receives exactly one explicit Ditto connection. Removing its final up carrier removes that connection, so an emulated partition prevents document exchange; restoring a carrier allows Ditto to converge its actual CRDT collection. `write_document`, `read_document`, and `observe` expose real DQL data and replica/convergence state, which populate the existing v1 Ditto peer/document/event fields.
 

@@ -7,6 +7,7 @@ use std::{
 
 use autonomy_sim_ditto_real::{
     RealDittoConfig, RealDittoEntity, RealDittoLink, RealDittoTransport, TELEMETRY_COLLECTION,
+    default_collections,
 };
 use serde_json::json;
 
@@ -30,11 +31,12 @@ fn link(up: bool) -> RealDittoLink {
 fn wait_for_document(
     transport: &RealDittoTransport,
     entity_id: &str,
+    collection: &str,
     document_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let deadline = Instant::now() + Duration::from_secs(15);
     while transport
-        .read_document(entity_id, TELEMETRY_COLLECTION, document_id)?
+        .read_document(entity_id, collection, document_id)?
         .is_none()
     {
         if Instant::now() >= deadline {
@@ -66,15 +68,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|| {
             PathBuf::from("target/ditto-real-demo").join(format!("{}-{nonce}", std::process::id()))
         });
+    let collection =
+        env::var("DITTO_REAL_COLLECTION").unwrap_or_else(|_| TELEMETRY_COLLECTION.to_owned());
+    let mut collections = default_collections();
+    if !collections.contains(&collection) {
+        collections.push(collection.clone());
+    }
     let mut transport = RealDittoTransport::new(
         &[entity("alpha"), entity("bravo")],
-        RealDittoConfig {
-            database_id: "00000005-0000-0000-0000-000000000000".into(),
+        RealDittoConfig::new(
+            "00000005-0000-0000-0000-000000000000".into(),
             license,
-            storage_root: storage_root.clone(),
+            storage_root.clone(),
             port_base,
-            listen_ip: "127.0.0.1".into(),
-        },
+            "127.0.0.1".into(),
+        )
+        .with_collections(collections),
     )?;
 
     println!(
@@ -86,12 +95,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if mode == "gated" {
         transport.write_document(
             "alpha",
-            TELEMETRY_COLLECTION,
+            &collection,
             "telemetry/warmup",
             json!({"phase": "connected"}),
             0.0,
         )?;
-        wait_for_document(&transport, "bravo", "telemetry/warmup")?;
+        wait_for_document(&transport, "bravo", &collection, "telemetry/warmup")?;
         println!("confirmed: peers synchronized over the live link");
         println!("bringing link down");
         transport.apply_links(&[link(false)])?;
@@ -100,7 +109,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("writing telemetry on alpha");
     transport.write_document(
         "alpha",
-        TELEMETRY_COLLECTION,
+        &collection,
         "telemetry/alpha",
         json!({"battery_pct": 88}),
         1.0,
@@ -109,22 +118,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         thread::sleep(Duration::from_secs(1));
         assert!(
             transport
-                .read_document("bravo", TELEMETRY_COLLECTION, "telemetry/alpha")?
+                .read_document("bravo", &collection, "telemetry/alpha")?
                 .is_none()
         );
         println!("confirmed: gated link blocked replication");
         println!("bringing link up");
         transport.apply_links(&[link(true)])?;
     }
-    wait_for_document(&transport, "bravo", "telemetry/alpha")?;
+    wait_for_document(&transport, "bravo", &collection, "telemetry/alpha")?;
     if mode == "gated" {
         println!("success: bravo received alpha's real Ditto document after link restoration");
     } else {
         println!("success: bravo received alpha's real Ditto document");
     }
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&transport.observe(&[link(true)])?)?
+    let observation = transport.observe(&[link(true)])?;
+    assert!(
+        observation.documents.iter().any(|document| {
+            document.collection == collection && document.document_id == "telemetry/alpha"
+        }),
+        "configured collection was not included in observation"
     );
+    println!("{}", serde_json::to_string_pretty(&observation)?);
     Ok(())
 }
