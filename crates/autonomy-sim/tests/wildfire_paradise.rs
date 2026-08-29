@@ -23,7 +23,7 @@ fn registry_exposes_chooseable_scenarios() {
             .iter()
             .map(|scenario| scenario.id.as_str())
             .collect::<Vec<_>>(),
-        vec!["isr-relay-demo", "wildfire-paradise"]
+        vec!["isr-relay-demo", "wildfire-paradise", "cuas-stadium"]
     );
     assert_eq!(descriptors[0].name, "ISR Relay Demo");
     assert_eq!(descriptors[0].entity_count, 6);
@@ -31,6 +31,9 @@ fn registry_exposes_chooseable_scenarios() {
     assert_eq!(descriptors[1].name, "Wildfire - Paradise");
     assert_eq!(descriptors[1].entity_count, 14);
     assert!(!descriptors[1].default);
+    assert_eq!(descriptors[2].name, "C-UAS Stadium Defense");
+    assert_eq!(descriptors[2].entity_count, 17);
+    assert!(!descriptors[2].default);
 }
 
 #[test]

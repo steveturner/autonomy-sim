@@ -23,6 +23,13 @@ const REGISTERED_SCENARIOS: &[(&str, &str, &str, ScenarioBuilder, bool)] = &[
         ScenarioBuilder::Wildfire,
         false,
     ),
+    (
+        "cuas-stadium",
+        "C-UAS Stadium Defense",
+        "cuas-stadium.toml",
+        ScenarioBuilder::Cuas,
+        false,
+    ),
 ];
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
@@ -31,6 +38,7 @@ pub enum ScenarioBuilder {
     #[default]
     Standard,
     Wildfire,
+    Cuas,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -129,6 +137,8 @@ pub struct ScenarioConfig {
     pub cot: CotConfig,
     #[serde(default)]
     pub wildfire: Option<WildfireConfig>,
+    #[serde(default)]
+    pub cuas: Option<CuasConfig>,
     pub nodes: Vec<NodeConfig>,
 }
 
@@ -198,7 +208,17 @@ impl ScenarioConfig {
                         node.id
                     )
                 }
-                "area_search" | "persistent_surveillance" | "comms_relay" | "firefighting" => {}
+                "cuas_threat" if self.scenario.builder != ScenarioBuilder::Cuas => {
+                    bail!(
+                        "node '{}' cuas_threat playbook requires C-UAS builder",
+                        node.id
+                    )
+                }
+                "area_search"
+                | "persistent_surveillance"
+                | "comms_relay"
+                | "firefighting"
+                | "cuas_threat" => {}
                 other => bail!("node '{}' has unknown mission playbook '{other}'", node.id),
             }
             for radio in &node.radios {
@@ -228,10 +248,20 @@ impl ScenarioConfig {
             (ScenarioBuilder::Wildfire, None) => {
                 bail!("wildfire builder requires a [wildfire] section")
             }
-            (ScenarioBuilder::Standard, Some(_)) => {
+            (ScenarioBuilder::Standard | ScenarioBuilder::Cuas, Some(_)) => {
                 bail!("[wildfire] section requires scenario.builder = 'wildfire'")
             }
-            (ScenarioBuilder::Standard, None) => {}
+            (ScenarioBuilder::Standard | ScenarioBuilder::Cuas, None) => {}
+        }
+        match (self.scenario.builder, &self.cuas) {
+            (ScenarioBuilder::Cuas, Some(cuas)) => cuas.validate(self, &ids)?,
+            (ScenarioBuilder::Cuas, None) => {
+                bail!("C-UAS builder requires a [cuas] section")
+            }
+            (ScenarioBuilder::Standard | ScenarioBuilder::Wildfire, Some(_)) => {
+                bail!("[cuas] section requires scenario.builder = 'cuas'")
+            }
+            (ScenarioBuilder::Standard | ScenarioBuilder::Wildfire, None) => {}
         }
         Ok(())
     }
@@ -344,6 +374,97 @@ pub struct FireCellConfig {
     pub name: String,
     pub position: Position,
     pub intensity: f64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct CuasConfig {
+    pub protected_site_id: String,
+    pub detection_range_m: f64,
+    pub detection_delay_s: f64,
+    pub ew_capacity: usize,
+    pub ew_effect_delay_s: f64,
+    pub ew_success_probability: f64,
+    pub interceptor_capacity: usize,
+    pub interceptor_range_m: f64,
+    pub intercept_time_s: f64,
+    pub intercept_success_probability: f64,
+    pub gun_range_m: f64,
+    pub gun_effect_delay_s: f64,
+    pub gun_success_probability: f64,
+}
+
+impl CuasConfig {
+    fn validate(
+        &self,
+        scenario: &ScenarioConfig,
+        ids: &std::collections::BTreeSet<String>,
+    ) -> Result<()> {
+        if !ids.contains(&self.protected_site_id) {
+            bail!(
+                "cuas.protected_site_id references unknown entity '{}'",
+                self.protected_site_id
+            );
+        }
+        let site = scenario
+            .nodes
+            .iter()
+            .find(|node| node.id == self.protected_site_id)
+            .expect("protected site ID was validated");
+        if site.kind != EntityKind::ProtectedSite {
+            bail!("cuas.protected_site_id must reference a kind='protected_site' entity");
+        }
+        for kind in [
+            EntityKind::RadarSensor,
+            EntityKind::EwJammer,
+            EntityKind::Interceptor,
+            EntityKind::GunSystem,
+            EntityKind::ThreatUas,
+        ] {
+            if !scenario.nodes.iter().any(|node| node.kind == kind) {
+                bail!("C-UAS scenario requires at least one kind='{kind:?}' node");
+            }
+        }
+        if scenario.nodes.iter().any(|node| {
+            node.kind == EntityKind::ThreatUas && node.affiliation != Affiliation::Hostile
+        }) {
+            bail!("all threat_uas nodes must use affiliation='hostile'");
+        }
+        if scenario.nodes.iter().any(|node| {
+            matches!(
+                node.kind,
+                EntityKind::RadarSensor
+                    | EntityKind::EwJammer
+                    | EntityKind::Interceptor
+                    | EntityKind::GunSystem
+            ) && node.affiliation != Affiliation::Friendly
+        }) {
+            bail!("all C-UAS defender nodes must use affiliation='friendly'");
+        }
+        let probabilities = [
+            self.ew_success_probability,
+            self.intercept_success_probability,
+            self.gun_success_probability,
+        ];
+        if probabilities
+            .iter()
+            .any(|value| !value.is_finite() || !(0.0..=1.0).contains(value))
+        {
+            bail!("C-UAS effect probabilities must be finite and in [0,1]");
+        }
+        if self.detection_range_m <= 0.0
+            || self.detection_delay_s < 0.0
+            || self.ew_capacity == 0
+            || self.ew_effect_delay_s <= 0.0
+            || self.interceptor_capacity == 0
+            || self.interceptor_range_m <= 0.0
+            || self.intercept_time_s <= 0.0
+            || self.gun_range_m <= 0.0
+            || self.gun_effect_delay_s <= 0.0
+        {
+            bail!("C-UAS ranges, capacities, and positive effect delays must be valid");
+        }
+        Ok(())
+    }
 }
 
 impl WildfireConfig {

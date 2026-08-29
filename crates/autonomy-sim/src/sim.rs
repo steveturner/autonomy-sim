@@ -6,6 +6,7 @@ use chrono::Utc;
 use crate::{
     behavior::BehaviorRuntime,
     cot::{CotSink, render_pli, sink_from_config},
+    cuas::CuasRuntime,
     ditto::{DittoFrame, PLI_COLLECTION, TRACKS_COLLECTION},
     ditto_transport::{DittoRuntime, DittoTransportConfig},
     model::{Entity, EntityKind, Kinematics, MissionState, MissionStatus, Position},
@@ -40,6 +41,7 @@ pub struct Simulation {
     cot_interval_ticks: u64,
     cot_stale_after_s: i64,
     wildfire: Option<WildfireRuntime>,
+    cuas: Option<CuasRuntime>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -144,13 +146,18 @@ impl Simulation {
             },
         };
         let entities: Vec<_> = agents.iter().map(|agent| agent.entity.clone()).collect();
+        let network_entities: Vec<_> = entities
+            .iter()
+            .filter(|entity| !entity.radios.is_empty())
+            .cloned()
+            .collect();
         let gateway_entity_id = entities
             .iter()
-            .find(|entity| entity.kind == EntityKind::Base)
-            .or_else(|| entities.first())
+            .find(|entity| entity.kind == EntityKind::Base && !entity.radios.is_empty())
+            .or_else(|| network_entities.first())
             .map(|entity| entity.id.clone())
             .ok_or_else(|| anyhow::anyhow!("scenario requires at least one node"))?;
-        network.register_nodes(&entities)?;
+        network.register_nodes(&network_entities)?;
         tracing::info!(backend = network.name(), "network backend initialized");
         let ditto = DittoRuntime::new(
             &entities,
@@ -165,6 +172,16 @@ impl Simulation {
             .map(|wildfire| WildfireRuntime::new(wildfire, config.scenario.seed, &entities))
             .transpose()?;
         if let Some(runtime) = &mut wildfire {
+            for agent in &mut agents {
+                runtime.initialize_entity(&mut agent.entity);
+            }
+        }
+        let mut cuas = config
+            .cuas
+            .as_ref()
+            .map(|cuas| CuasRuntime::new(cuas, config.scenario.seed, &entities))
+            .transpose()?;
+        if let Some(runtime) = &mut cuas {
             for agent in &mut agents {
                 runtime.initialize_entity(&mut agent.entity);
             }
@@ -187,6 +204,7 @@ impl Simulation {
                 .max(1.0) as u64,
             cot_stale_after_s: config.cot.stale_after_s,
             wildfire,
+            cuas,
         })
     }
 
@@ -217,7 +235,38 @@ impl Simulation {
             .iter()
             .map(|agent| (agent.entity.id.clone(), agent.entity.position))
             .collect();
-        if let Some(wildfire) = &mut self.wildfire {
+        if let Some(cuas) = &mut self.cuas {
+            let entities: Vec<_> = self
+                .agents
+                .iter()
+                .map(|agent| agent.entity.clone())
+                .collect();
+            let cuas_tick = cuas.tick(&entities, dt_s, self.sim_time_s);
+            for update in cuas_tick.entity_updates {
+                if let Some(agent) = self
+                    .agents
+                    .iter_mut()
+                    .find(|agent| agent.entity.id == update.entity_id)
+                {
+                    if agent.entity.kind == EntityKind::ThreatUas {
+                        agent.entity.position = update.position;
+                        agent.entity.kinematics = update.kinematics;
+                        agent.entity.heading_deg = update.kinematics.heading_deg;
+                    }
+                    agent.entity.mission_state = update.mission_state.clone();
+                    agent.entity.mission.active_node = update.mission_state;
+                }
+            }
+            for document in cuas_tick.coordination_documents {
+                self.ditto.upsert_document(
+                    document.collection,
+                    &document.document_id,
+                    &document.author_entity_id,
+                    document.value,
+                    self.sim_time_s,
+                );
+            }
+        } else if let Some(wildfire) = &mut self.wildfire {
             let entities: Vec<_> = self
                 .agents
                 .iter()
@@ -294,7 +343,14 @@ impl Simulation {
             .iter()
             .map(|agent| agent.entity.clone())
             .collect();
-        let links = self.network.link_states(self.sim_time_s, &entities)?;
+        let network_entities: Vec<_> = entities
+            .iter()
+            .filter(|entity| !entity.radios.is_empty())
+            .cloned()
+            .collect();
+        let links = self
+            .network
+            .link_states(self.sim_time_s, &network_entities)?;
         let previous: BTreeMap<_, _> = self
             .previous_links
             .iter()
@@ -432,6 +488,7 @@ mod tests {
             api: ApiConfig::default(),
             cot: CotConfig::default(),
             wildfire: None,
+            cuas: None,
             nodes: vec![
                 NodeConfig {
                     id: "a".into(),

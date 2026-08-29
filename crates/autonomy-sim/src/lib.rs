@@ -2,6 +2,7 @@
 
 pub mod behavior;
 pub mod cot;
+pub mod cuas;
 pub mod ditto;
 pub mod ditto_transport;
 pub mod model;

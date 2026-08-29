@@ -1,0 +1,244 @@
+# Defensive force-protection simulation for a protected civilian World Cup
+# stadium. All effects are abstract probability/state transitions; this
+# scenario contains no fire-control, ballistics, aiming, or guidance model.
+
+[scenario]
+name = "cuas-stadium"
+description = "Layered defensive C-UAS funnel protects a World Cup stadium using real-Ditto-coordinated sensors, EW, interceptors, and an abstract last layer"
+seed = 20260626
+realtime = true
+builder = "cuas"
+
+[simulation]
+tick_hz = 5.0
+network_backend = "analytic"
+
+[api]
+bind = "127.0.0.1:9000"
+
+[cot]
+sink = "disabled"
+interval_s = 1.0
+stale_after_s = 10
+
+[cuas]
+protected_site_id = "world-cup-stadium"
+detection_range_m = 3200.0
+detection_delay_s = 0.8
+ew_capacity = 4
+ew_effect_delay_s = 1.4
+ew_success_probability = 0.55
+interceptor_capacity = 3
+interceptor_range_m = 2100.0
+intercept_time_s = 3.0
+intercept_success_probability = 0.80
+gun_range_m = 850.0
+gun_effect_delay_s = 2.0
+gun_success_probability = 0.65
+
+[[nodes]]
+id = "world-cup-stadium"
+name = "Protected World Cup Stadium"
+kind = "protected_site"
+affiliation = "friendly"
+domain = "ground"
+mission_role = "protected_civilian_site"
+position = { lat_deg = 33.9535, lon_deg = -118.3392, alt_m = 36.0 }
+[nodes.mission]
+playbook = "hold"
+
+# Defender nodes are the only Ditto peers. Their co-located mesh radios form a
+# common operating picture around the venue.
+[[nodes]]
+id = "radar-north"
+name = "North Defensive Radar / EO"
+kind = "radar_sensor"
+affiliation = "friendly"
+domain = "ground"
+mission_role = "detection"
+position = { lat_deg = 33.9580, lon_deg = -118.3392, alt_m = 43.0 }
+radios = [{ link_type = "mesh", range_m = 2500.0, capacity_bps = 8000000, base_latency_ms = 8.0 }]
+[nodes.mission]
+playbook = "hold"
+
+[[nodes]]
+id = "radar-south"
+name = "South Defensive Radar / EO"
+kind = "radar_sensor"
+affiliation = "friendly"
+domain = "ground"
+mission_role = "detection"
+position = { lat_deg = 33.9490, lon_deg = -118.3392, alt_m = 42.0 }
+radios = [{ link_type = "mesh", range_m = 2500.0, capacity_bps = 8000000, base_latency_ms = 8.0 }]
+[nodes.mission]
+playbook = "hold"
+
+[[nodes]]
+id = "jammer-east"
+name = "East Defensive EW Node"
+kind = "ew_jammer"
+affiliation = "friendly"
+domain = "ground"
+mission_role = "electronic_protection"
+position = { lat_deg = 33.9535, lon_deg = -118.3340, alt_m = 41.0 }
+radios = [{ link_type = "mesh", range_m = 2500.0, capacity_bps = 8000000, base_latency_ms = 8.0 }]
+[nodes.mission]
+playbook = "hold"
+
+[[nodes]]
+id = "jammer-west"
+name = "West Defensive EW Node"
+kind = "ew_jammer"
+affiliation = "friendly"
+domain = "ground"
+mission_role = "electronic_protection"
+position = { lat_deg = 33.9535, lon_deg = -118.3444, alt_m = 41.0 }
+radios = [{ link_type = "mesh", range_m = 2500.0, capacity_bps = 8000000, base_latency_ms = 8.0 }]
+[nodes.mission]
+playbook = "hold"
+
+[[nodes]]
+id = "interceptor-01"
+name = "Defensive Interceptor 01"
+kind = "interceptor"
+affiliation = "friendly"
+domain = "air"
+mission_role = "defensive_interceptor"
+position = { lat_deg = 33.9550, lon_deg = -118.3375, alt_m = 120.0 }
+radios = [{ link_type = "mesh", range_m = 2500.0, capacity_bps = 8000000, base_latency_ms = 8.0 }]
+[nodes.mission]
+playbook = "hold"
+
+[[nodes]]
+id = "interceptor-02"
+name = "Defensive Interceptor 02"
+kind = "interceptor"
+affiliation = "friendly"
+domain = "air"
+mission_role = "defensive_interceptor"
+position = { lat_deg = 33.9520, lon_deg = -118.3375, alt_m = 125.0 }
+radios = [{ link_type = "mesh", range_m = 2500.0, capacity_bps = 8000000, base_latency_ms = 8.0 }]
+[nodes.mission]
+playbook = "hold"
+
+[[nodes]]
+id = "interceptor-03"
+name = "Defensive Interceptor 03"
+kind = "interceptor"
+affiliation = "friendly"
+domain = "air"
+mission_role = "defensive_interceptor"
+position = { lat_deg = 33.9535, lon_deg = -118.3410, alt_m = 130.0 }
+radios = [{ link_type = "mesh", range_m = 2500.0, capacity_bps = 8000000, base_latency_ms = 8.0 }]
+[nodes.mission]
+playbook = "hold"
+
+[[nodes]]
+id = "bullfrog-abstract-01"
+name = "Bullfrog-Class Abstract Last Layer"
+kind = "gun_system"
+affiliation = "friendly"
+domain = "ground"
+mission_role = "abstract_terminal_defense"
+position = { lat_deg = 33.9530, lon_deg = -118.3392, alt_m = 40.0 }
+radios = [{ link_type = "mesh", range_m = 2500.0, capacity_bps = 8000000, base_latency_ms = 8.0 }]
+[nodes.mission]
+playbook = "hold"
+
+# Abstract hostile tracks have no radios and therefore never become Ditto
+# peers. They fly simple straight inbound paths solely to exercise the funnel.
+[[nodes]]
+id = "threat-01"
+name = "Simulated Hostile Track 01"
+kind = "threat_uas"
+affiliation = "hostile"
+domain = "air"
+mission_role = "simulated_threat"
+position = { lat_deg = 33.9820, lon_deg = -118.3392, alt_m = 150.0 }
+[nodes.mission]
+playbook = "cuas_threat"
+speed_mps = 36.0
+
+[[nodes]]
+id = "threat-02"
+name = "Simulated Hostile Track 02"
+kind = "threat_uas"
+affiliation = "hostile"
+domain = "air"
+mission_role = "simulated_threat"
+position = { lat_deg = 33.9790, lon_deg = -118.3250, alt_m = 170.0 }
+[nodes.mission]
+playbook = "cuas_threat"
+speed_mps = 38.0
+
+[[nodes]]
+id = "threat-03"
+name = "Simulated Hostile Track 03"
+kind = "threat_uas"
+affiliation = "hostile"
+domain = "air"
+mission_role = "simulated_threat"
+position = { lat_deg = 33.9700, lon_deg = -118.3120, alt_m = 145.0 }
+[nodes.mission]
+playbook = "cuas_threat"
+speed_mps = 40.0
+
+[[nodes]]
+id = "threat-04"
+name = "Simulated Hostile Track 04"
+kind = "threat_uas"
+affiliation = "hostile"
+domain = "air"
+mission_role = "simulated_threat"
+position = { lat_deg = 33.9400, lon_deg = -118.3100, alt_m = 160.0 }
+[nodes.mission]
+playbook = "cuas_threat"
+speed_mps = 34.0
+
+[[nodes]]
+id = "threat-05"
+name = "Simulated Hostile Track 05"
+kind = "threat_uas"
+affiliation = "hostile"
+domain = "air"
+mission_role = "simulated_threat"
+position = { lat_deg = 33.9280, lon_deg = -118.3220, alt_m = 155.0 }
+[nodes.mission]
+playbook = "cuas_threat"
+speed_mps = 37.0
+
+[[nodes]]
+id = "threat-06"
+name = "Simulated Hostile Track 06"
+kind = "threat_uas"
+affiliation = "hostile"
+domain = "air"
+mission_role = "simulated_threat"
+position = { lat_deg = 33.9250, lon_deg = -118.3450, alt_m = 165.0 }
+[nodes.mission]
+playbook = "cuas_threat"
+speed_mps = 39.0
+
+[[nodes]]
+id = "threat-07"
+name = "Simulated Hostile Track 07"
+kind = "threat_uas"
+affiliation = "hostile"
+domain = "air"
+mission_role = "simulated_threat"
+position = { lat_deg = 33.9440, lon_deg = -118.3680, alt_m = 150.0 }
+[nodes.mission]
+playbook = "cuas_threat"
+speed_mps = 35.0
+
+[[nodes]]
+id = "threat-08"
+name = "Simulated Hostile Track 08"
+kind = "threat_uas"
+affiliation = "hostile"
+domain = "air"
+mission_role = "simulated_threat"
+position = { lat_deg = 33.9680, lon_deg = -118.3650, alt_m = 175.0 }
+[nodes.mission]
+playbook = "cuas_threat"
+speed_mps = 36.0
