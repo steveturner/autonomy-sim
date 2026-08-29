@@ -27,7 +27,7 @@ pub struct AppState {
 }
 
 pub async fn run(mut simulation: Simulation, bind: SocketAddr) -> Result<()> {
-    let initial = simulation.snapshot();
+    let initial = simulation.snapshot()?;
     let tick_hz = simulation.tick_hz();
     let hello = HelloEnvelope {
         schema: SCHEMA,
@@ -53,7 +53,13 @@ pub async fn run(mut simulation: Simulation, bind: SocketAddr) -> Result<()> {
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             ticker.tick().await;
-            let frame = simulation.tick();
+            let frame = match simulation.tick() {
+                Ok(frame) => frame,
+                Err(error) => {
+                    tracing::error!(%error, "simulation tick failed");
+                    continue;
+                }
+            };
             let encoded = match serde_json::to_string(&frame) {
                 Ok(encoded) => encoded,
                 Err(error) => {

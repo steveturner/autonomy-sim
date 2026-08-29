@@ -19,6 +19,34 @@ pub enum Domain {
     Space,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Hash, Ord, PartialEq, PartialOrd, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LinkType {
+    Mesh,
+    Cellular,
+    Satcom,
+    Ble,
+}
+
+impl std::fmt::Display for LinkType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Mesh => "mesh",
+            Self::Cellular => "cellular",
+            Self::Satcom => "satcom",
+            Self::Ble => "ble",
+        })
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct Radio {
+    pub link_type: LinkType,
+    pub range_m: f64,
+    pub capacity_bps: u64,
+    pub base_latency_ms: f64,
+}
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct Position {
     pub lat_deg: f64,
@@ -102,6 +130,8 @@ pub struct Entity {
     pub position: Position,
     pub kinematics: Kinematics,
     pub mission: MissionState,
+    #[serde(skip_serializing)]
+    pub radios: Vec<Radio>,
 }
 
 #[cfg(test)]

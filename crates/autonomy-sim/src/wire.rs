@@ -1,6 +1,9 @@
 use serde::Serialize;
 
-use crate::model::Entity;
+use crate::{
+    model::{Entity, LinkType, Position},
+    network::{LinkEvent, LinkState, LinkStatus, TrafficState},
+};
 
 pub const SCHEMA: &str = "autonomy-sim/v1";
 
@@ -32,10 +35,46 @@ pub struct StateEnvelope {
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct StatePayload {
     pub entities: Vec<Entity>,
-    pub links: Vec<serde_json::Value>,
-    pub link_events: Vec<serde_json::Value>,
-    pub traffic: Vec<serde_json::Value>,
+    pub links: Vec<LinkState>,
+    pub link_events: Vec<LinkEvent>,
+    pub traffic: Vec<TrafficState>,
     pub czml: Vec<serde_json::Value>,
+}
+
+pub fn link_czml(
+    link: &LinkState,
+    positions: &std::collections::BTreeMap<String, Position>,
+) -> Option<serde_json::Value> {
+    if link.state != LinkStatus::Up {
+        return None;
+    }
+    let source = positions.get(&link.source)?;
+    let target = positions.get(&link.target)?;
+    let color = match link.link_type {
+        LinkType::Mesh => [34, 211, 238, 220],
+        LinkType::Cellular => [232, 121, 249, 220],
+        LinkType::Satcom => [251, 191, 36, 220],
+        LinkType::Ble => [74, 222, 128, 220],
+    };
+    Some(serde_json::json!({
+        "id": link.id,
+        "name": format!("{} {} ↔ {}", link.link_type, link.source, link.target),
+        "polyline": {
+            "positions": { "cartographicDegrees": [
+                source.lon_deg, source.lat_deg, source.alt_m,
+                target.lon_deg, target.lat_deg, target.alt_m
+            ]},
+            "material": { "solidColor": { "color": { "rgba": color }}},
+            "width": 1.0 + link.quality * 3.0
+        },
+        "properties": {
+            "source": link.source,
+            "target": link.target,
+            "link_type": link.link_type,
+            "quality": link.quality,
+            "traffic_units": "bits_per_second"
+        }
+    }))
 }
 
 impl StateEnvelope {
@@ -91,6 +130,7 @@ mod tests {
             },
             kinematics: Kinematics::default(),
             mission: MissionState::default(),
+            radios: Vec::new(),
         };
         let packet = super::entity_czml(&entity);
         assert_eq!(

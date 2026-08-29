@@ -30,5 +30,5 @@ async fn main() -> Result<()> {
         None => config.api.bind.parse().context("parsing api.bind")?,
     };
     tracing::info!(scenario = %config.scenario.name, path = %args.scenario.display(), "loaded scenario");
-    server::run(Simulation::new(&config), bind).await
+    server::run(Simulation::try_new(&config)?, bind).await
 }
