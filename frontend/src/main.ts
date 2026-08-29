@@ -28,6 +28,9 @@ viewer.imageryLayers.addImageryProvider(new Cesium.OpenStreetMapImageryProvider(
 
 const entityVisuals = new Map<string, { marker: any; trail: any; history: number[] }>();
 const linkVisuals = new Map<string, any>();
+const svgLinkVisuals = new Map<string, {
+  line: SVGLineElement; source: string; target: string; linkType: LinkType;
+}>();
 const entityPositions = new Map<string, EntityState['position']>();
 let hasFramed = false;
 let googleTiles: any = null;
@@ -41,10 +44,18 @@ const linkColors: Record<LinkType, any> = {
   ble: Cesium.Color.fromCssColorString('#4ade80'),
 };
 
-function byId<T extends HTMLElement>(id: string): T {
+const linkCssColors: Record<LinkType, string> = {
+  mesh: '#22d3ee',
+  cellular: '#e879f9',
+  satcom: '#fbbf24',
+  ble: '#4ade80',
+};
+const linkOffsets: Record<LinkType, number> = { mesh: -6, cellular: -2, satcom: 2, ble: 6 };
+
+function byId<T extends Element>(id: string): T {
   const node = document.getElementById(id);
   if (!node) throw new Error(`missing element #${id}`);
-  return node as T;
+  return node as unknown as T;
 }
 
 function iconFor(entity: EntityState): string {
@@ -150,12 +161,31 @@ function updateLinks(links: LinkState[], traffic: TrafficState[]): void {
       target.lon_deg, target.lat_deg, target.alt_m,
     ]);
     const rateFraction = Math.min(1, (rates.get(link.id) ?? 0) / Math.max(1, link.capacity_bps));
-    const color = linkColors[link.link_type].withAlpha(0.22 + 0.72 * link.quality);
-    const width = 1.4 + 2.8 * rateFraction;
+    const color = linkColors[link.link_type].withAlpha(0.48 + 0.48 * link.quality);
+    const width = 2.2 + 3.8 * rateFraction;
     const material = link.link_type === 'satcom' || link.link_type === 'ble'
       ? new Cesium.PolylineDashMaterialProperty({ color, dashLength: link.link_type === 'ble' ? 5 : 16 })
       : color;
     const existing = linkVisuals.get(link.id);
+    const svgExisting = svgLinkVisuals.get(link.id);
+    const svgLine = svgExisting?.line ?? document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    svgLine.style.color = linkCssColors[link.link_type];
+    svgLine.setAttribute('stroke', linkCssColors[link.link_type]);
+    svgLine.setAttribute('stroke-opacity', String(0.52 + 0.44 * link.quality));
+    svgLine.setAttribute('stroke-width', String(width));
+    svgLine.setAttribute(
+      'stroke-dasharray',
+      link.link_type === 'satcom' ? '14 9' : link.link_type === 'ble' ? '4 6' : '',
+    );
+    if (!svgExisting) {
+      byId<SVGSVGElement>('linkOverlay').append(svgLine);
+      svgLinkVisuals.set(link.id, {
+        line: svgLine,
+        source: link.source,
+        target: link.target,
+        linkType: link.link_type,
+      });
+    }
     if (existing) {
       existing.polyline.positions = positions;
       existing.polyline.width = width;
@@ -164,7 +194,7 @@ function updateLinks(links: LinkState[], traffic: TrafficState[]): void {
       linkVisuals.set(link.id, viewer.entities.add({
         id: link.id,
         name: `DITTO / ${link.link_type.toUpperCase()} ${link.source} ↔ ${link.target}`,
-        polyline: { positions, width, material, arcType: Cesium.ArcType.NONE },
+        polyline: { positions, width, material, arcType: Cesium.ArcType.GEODESIC },
         description: `Ditto peer link over ${link.link_type}<br>${link.source_peer_id} ↔ ${link.target_peer_id}<br>Quality ${(link.quality * 100).toFixed(0)}% · ${link.distance_m.toFixed(0)} m · ${link.latency_ms.toFixed(1)} ms`,
       }));
     }
@@ -174,6 +204,43 @@ function updateLinks(links: LinkState[], traffic: TrafficState[]): void {
       viewer.entities.remove(visual);
       linkVisuals.delete(id);
     }
+  }
+  for (const [id, visual] of svgLinkVisuals) {
+    if (!active.has(id)) {
+      visual.line.remove();
+      svgLinkVisuals.delete(id);
+    }
+  }
+}
+
+function syncLinkOverlay(): void {
+  for (const visual of svgLinkVisuals.values()) {
+    const source = entityPositions.get(visual.source);
+    const target = entityPositions.get(visual.target);
+    if (!source || !target) continue;
+    const sourceWindow = Cesium.SceneTransforms.worldToWindowCoordinates(
+      viewer.scene,
+      Cesium.Cartesian3.fromDegrees(source.lon_deg, source.lat_deg, source.alt_m),
+    );
+    const targetWindow = Cesium.SceneTransforms.worldToWindowCoordinates(
+      viewer.scene,
+      Cesium.Cartesian3.fromDegrees(target.lon_deg, target.lat_deg, target.alt_m),
+    );
+    if (!sourceWindow || !targetWindow) {
+      visual.line.style.display = 'none';
+      continue;
+    }
+    const dx = targetWindow.x - sourceWindow.x;
+    const dy = targetWindow.y - sourceWindow.y;
+    const length = Math.hypot(dx, dy) || 1;
+    const offset = linkOffsets[visual.linkType];
+    const offsetX = (-dy / length) * offset;
+    const offsetY = (dx / length) * offset;
+    visual.line.style.display = '';
+    visual.line.setAttribute('x1', String(sourceWindow.x + offsetX));
+    visual.line.setAttribute('y1', String(sourceWindow.y + offsetY));
+    visual.line.setAttribute('x2', String(targetWindow.x + offsetX));
+    visual.line.setAttribute('y2', String(targetWindow.y + offsetY));
   }
 }
 
@@ -209,6 +276,25 @@ function formatTime(seconds: number): string {
   return `${mins}:${(seconds % 60).toFixed(1).padStart(4, '0')}`;
 }
 
+function frameScenario(entities: EntityState[]): void {
+  const longitudes = entities.map((entity) => entity.position.lon_deg);
+  const latitudes = entities.map((entity) => entity.position.lat_deg);
+  const west = Math.min(...longitudes);
+  const east = Math.max(...longitudes);
+  const south = Math.min(...latitudes);
+  const north = Math.max(...latitudes);
+  const lonMargin = Math.max((east - west) * 0.22, 0.0025);
+  const latMargin = Math.max((north - south) * 0.22, 0.0025);
+  viewer.camera.setView({
+    destination: Cesium.Rectangle.fromDegrees(
+      west - lonMargin,
+      south - latMargin,
+      east + lonMargin,
+      north + latMargin,
+    ),
+  });
+}
+
 function handleMessage(value: HelloEnvelope | StateEnvelope): void {
   if (value.schema !== 'autonomy-sim/v1') return;
   if (value.message_type === 'hello') {
@@ -220,7 +306,7 @@ function handleMessage(value: HelloEnvelope | StateEnvelope): void {
   updateHud(value);
   if (!hasFramed && value.payload.entities.length) {
     hasFramed = true;
-    viewer.zoomTo([...entityVisuals.values()].map((visual) => visual.marker), new Cesium.HeadingPitchRange(0, -Math.PI / 2, 3500));
+    frameScenario(value.payload.entities);
   }
 }
 
@@ -278,4 +364,5 @@ byId<HTMLButtonElement>('mode3d').addEventListener('click', () => {
 });
 
 connect();
-(window as any).autonomySim = { viewer, entityVisuals, linkVisuals, reconnect: connect };
+viewer.scene.postRender.addEventListener(syncLinkOverlay);
+(window as any).autonomySim = { viewer, entityVisuals, linkVisuals, svgLinkVisuals, reconnect: connect };

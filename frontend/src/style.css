@@ -11,6 +11,18 @@
 html, body, #app, #cesiumContainer { width: 100%; height: 100%; margin: 0; overflow: hidden; }
 button { font: inherit; }
 
+#linkOverlay {
+  position: fixed;
+  z-index: 2;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+#linkOverlay line { stroke-linecap: round; filter: drop-shadow(0 0 3px currentColor); }
+
 #cesiumContainer::after {
   position: fixed;
   inset: 0;
@@ -106,4 +118,3 @@ button { font: inherit; }
   .hud-right { display: none; }
   .safety { display: none; }
 }
-
