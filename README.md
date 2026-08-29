@@ -194,7 +194,7 @@ Implemented:
 - Auditable sequence, fallback, and parallel behavior trees with ISR/coverage/relay playbooks.
 - `NetworkBackend` and `PropagationModel` traits, outdoor analytic networking, four carrier types, transition events, quality/loss/latency/capacity, and deterministic Ditto replication traffic.
 - A behavioral Ditto model with one peer per entity, `c2.tasking`, `c2.pli`, `c2.tracks`, and `telemetry.platform` collections, bounded per-link document propagation, offline persistence, and eventual convergence after reconnect.
-- An opt-in native `dittoffi` transport with one real small peer and persistent store per entity, real DQL collection writes/subscriptions, explicit-TCP reachability controlled by current `NetworkBackend` links, and process-level convergence/partition integration tests.
+- An opt-in native `dittoffi` transport selected with `--ditto real`, with one real small peer and persistent store per entity, real DQL collection writes/subscriptions, explicit-TCP reachability controlled by current `NetworkBackend` links, and process-level convergence/partition integration tests.
 - A dependency-light SigForge REST `NetworkBackend` adapter that publishes entity positions, consumes directed per-link SINR, and maps bidirectional PHY state into autonomy-sim link status and metrics behind a mockable API boundary.
 - Axum REST snapshot and Tokio WebSocket state streamer using the documented v1 contract and CZML-compatible packets.
 - A Ditto-to-CoT gateway with PLI/track XML and file, UDP, and TCP sinks.
@@ -202,7 +202,6 @@ Implemented:
 
 Stubbed or deferred:
 
-- The original in-core `SigForgeBackend` remains a fail-closed compatibility stub; live SigForge support is supplied by the additive `autonomy-sim-net-sigforge` crate. Scenario/CLI registration is kept separate from the stable core wire contract.
 - Native Ditto link gating currently controls reachability. Packet-level shaping of Ditto traffic by SigForge/CORE-EMANE latency, loss, and capacity is deferred.
 - TAK-to-Ditto ingest and production TAK Server certificate handling are Phase 2.
 - Analytic traffic is a deterministic document-operation aggregate, not a Ditto packet capture.

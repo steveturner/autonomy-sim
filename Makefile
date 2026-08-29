@@ -1,4 +1,4 @@
-.PHONY: setup live demo wildfire wildfire-live frontend check build-dittoffi test-ditto-real demo-ditto-real clean-output
+.PHONY: setup live demo wildfire wildfire-live frontend check build-dittoffi test-ditto-real demo-ditto-real demo-ditto-peers clean-output
 
 HOST ?= 127.0.0.1
 DITTO_SOURCE_DIR ?=
@@ -41,8 +41,13 @@ build-dittoffi:
 test-ditto-real: build-dittoffi
 	@test -n "$${DITTO_LICENSE:-}" || { echo "set DITTO_LICENSE to an offline Ditto license"; exit 2; }
 	env -u NO_COLOR DITTO_SOURCE_DIR="$(DITTO_SOURCE_DIR)" DITTOFFI_LIB_DIR="$(DITTO_BUILD_TARGET_DIR)/release/deps" RUST_LOG="$${RUST_LOG:-warn}" cargo test -p autonomy-sim-ditto-real --features dittoffi --test real_peers
+	env -u NO_COLOR DITTO_SOURCE_DIR="$(DITTO_SOURCE_DIR)" DITTOFFI_LIB_DIR="$(DITTO_BUILD_TARGET_DIR)/release/deps" LD_LIBRARY_PATH="$(DITTO_BUILD_TARGET_DIR)/release/deps$${LD_LIBRARY_PATH:+:$${LD_LIBRARY_PATH}}" RUST_LOG="$${RUST_LOG:-warn}" cargo test -p autonomy-sim --features ditto-real --test real_ditto_runtime
 
 demo-ditto-real: build-dittoffi
+	@test -n "$${DITTO_LICENSE:-}" || { echo "set DITTO_LICENSE to an offline Ditto license"; exit 2; }
+	env -u NO_COLOR DITTO_SOURCE_DIR="$(DITTO_SOURCE_DIR)" DITTOFFI_LIB_DIR="$(DITTO_BUILD_TARGET_DIR)/release/deps" LD_LIBRARY_PATH="$(DITTO_BUILD_TARGET_DIR)/release/deps$${LD_LIBRARY_PATH:+:$${LD_LIBRARY_PATH}}" RUST_LOG="$${RUST_LOG:-warn}" cargo run -p autonomy-sim --features ditto-real -- --ditto real $${DITTO_REAL_ARGS:-}
+
+demo-ditto-peers: build-dittoffi
 	@test -n "$${DITTO_LICENSE:-}" || { echo "set DITTO_LICENSE to an offline Ditto license"; exit 2; }
 	env -u NO_COLOR DITTO_SOURCE_DIR="$(DITTO_SOURCE_DIR)" DITTOFFI_LIB_DIR="$(DITTO_BUILD_TARGET_DIR)/release/deps" RUST_LOG="$${RUST_LOG:-warn}" cargo run -p autonomy-sim-ditto-real --features dittoffi --bin autonomy-sim-ditto-real-demo
 
