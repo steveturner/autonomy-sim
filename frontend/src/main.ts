@@ -5,6 +5,9 @@ declare const Cesium: any;
 
 (window as any).CESIUM_BASE_URL = 'https://cdn.jsdelivr.net/npm/cesium@1.124/Build/Cesium/';
 
+const cesiumIonToken = (import.meta.env.VITE_CESIUM_ION_TOKEN as string | undefined)?.trim();
+if (cesiumIonToken) Cesium.Ion.defaultAccessToken = cesiumIonToken;
+
 const viewer = new Cesium.Viewer('cesiumContainer', {
   animation: false,
   timeline: false,
@@ -22,9 +25,63 @@ const viewer = new Cesium.Viewer('cesiumContainer', {
 
 viewer.scene.globe.enableLighting = false;
 viewer.scene.backgroundColor = Cesium.Color.fromCssColorString('#02070b');
-viewer.imageryLayers.addImageryProvider(new Cesium.OpenStreetMapImageryProvider({
-  url: 'https://tile.openstreetmap.org/',
-}));
+
+const ESRI_WORLD_IMAGERY_URL = 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer';
+
+async function imageryProvider(): Promise<any> {
+  const source = ((import.meta.env.VITE_IMAGERY_SOURCE as string | undefined) || 'esri').trim().toLowerCase();
+  const customUrl = (import.meta.env.VITE_IMAGERY_URL as string | undefined)?.trim();
+
+  if (source === 'url') {
+    if (!customUrl) throw new Error('VITE_IMAGERY_URL is required when VITE_IMAGERY_SOURCE=url');
+    return new Cesium.UrlTemplateImageryProvider({ url: customUrl });
+  }
+  if (source === 'esri') {
+    return Cesium.ArcGisMapServerImageryProvider.fromUrl(customUrl || ESRI_WORLD_IMAGERY_URL);
+  }
+  if (!cesiumIonToken) {
+    throw new Error(`${source} imagery requires VITE_CESIUM_ION_TOKEN`);
+  }
+  if (source === 'sentinel-2' || source === 'sentinel2') {
+    return Cesium.IonImageryProvider.fromAssetId(3954);
+  }
+  if (source === 'bing-labels') {
+    return Cesium.createWorldImageryAsync({ style: Cesium.IonWorldImageryStyle.AERIAL_WITH_LABELS });
+  }
+  if (source === 'bing' || source === 'bing-aerial' || source === 'cesium-world') {
+    return Cesium.createWorldImageryAsync({ style: Cesium.IonWorldImageryStyle.AERIAL });
+  }
+  throw new Error(`Unsupported VITE_IMAGERY_SOURCE: ${source}`);
+}
+
+async function configureGlobe(): Promise<void> {
+  try {
+    viewer.imageryLayers.addImageryProvider(await imageryProvider());
+  } catch (error) {
+    console.warn('Configured satellite imagery unavailable; falling back to Esri World Imagery', error);
+    if (((import.meta.env.VITE_IMAGERY_SOURCE as string | undefined) || 'esri').toLowerCase() !== 'esri') {
+      try {
+        viewer.imageryLayers.addImageryProvider(
+          await Cesium.ArcGisMapServerImageryProvider.fromUrl(ESRI_WORLD_IMAGERY_URL),
+        );
+      } catch (fallbackError) {
+        console.error('Esri World Imagery is unavailable', fallbackError);
+      }
+    }
+  }
+
+  if (!cesiumIonToken) return;
+  try {
+    viewer.terrainProvider = await Cesium.createWorldTerrainAsync({
+      requestVertexNormals: true,
+      requestWaterMask: true,
+    });
+  } catch (error) {
+    console.warn('Cesium World Terrain unavailable; retaining ellipsoid terrain', error);
+  }
+}
+
+void configureGlobe();
 
 const entityVisuals = new Map<string, { marker: any; trail: any; history: number[] }>();
 const linkVisuals = new Map<string, any>();
