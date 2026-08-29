@@ -112,6 +112,7 @@ async fn main() -> Result<()> {
                     storage_root: args.ditto_storage_root,
                     port_base: args.ditto_port_base,
                     listen_ip: args.ditto_listen_ip,
+                    collections: Vec::new(),
                 })
             }
         },

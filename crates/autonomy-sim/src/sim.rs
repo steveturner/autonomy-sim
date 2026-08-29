@@ -7,7 +7,10 @@ use crate::{
     behavior::BehaviorRuntime,
     cot::{CotSink, render_pli, sink_from_config},
     cuas::CuasRuntime,
-    ditto::{DittoFrame, PLI_COLLECTION, TRACKS_COLLECTION},
+    ditto::{
+        CUAS_ENGAGEMENTS_COLLECTION, CUAS_EW_ASSIGNMENTS_COLLECTION, CUAS_TRACKS_COLLECTION,
+        DittoFrame, PLI_COLLECTION, TRACKS_COLLECTION,
+    },
     ditto_transport::{DittoRuntime, DittoTransportConfig},
     model::{Entity, EntityKind, Kinematics, MissionState, MissionStatus, Position},
     network::{
@@ -66,6 +69,18 @@ impl Simulation {
         config: &ScenarioConfig,
         options: &SimulationOptions,
     ) -> Result<Self> {
+        let mut options = options.clone();
+        if let DittoTransportConfig::Real(real) = &mut options.ditto {
+            real.collections = if config.cuas.is_some() {
+                vec![
+                    CUAS_TRACKS_COLLECTION.into(),
+                    CUAS_EW_ASSIGNMENTS_COLLECTION.into(),
+                    CUAS_ENGAGEMENTS_COLLECTION.into(),
+                ]
+            } else {
+                Vec::new()
+            };
+        }
         let mut agents: Vec<_> = config
             .nodes
             .iter()
@@ -188,7 +203,7 @@ impl Simulation {
         }
 
         Ok(Self {
-            options: options.clone(),
+            options,
             scenario_name: config.scenario.name.clone(),
             tick_hz: config.simulation.tick_hz,
             sequence: 0,
