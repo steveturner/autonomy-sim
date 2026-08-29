@@ -71,10 +71,35 @@ The public interface is `autonomy-sim/v1`. Additive fields may appear without a 
 
 - WebSocket: `GET /api/v1/stream`. The server sends one `hello`, immediately sends the latest `state`, then sends a `state` after every simulation tick. Text frames contain one UTF-8 JSON object. Client messages are not required in Phase 1; unsupported messages are ignored.
 - REST snapshot: `GET /api/v1/snapshot` returns the exact latest `state` envelope.
-- Scenario registry: `GET /api/v1/scenarios` returns `{"scenarios":[{"name":"isr-relay-demo","description":"...","builder":"standard"},{"name":"wildfire-paradise","description":"...","builder":"wildfire"}]}`. The array is in stable registry order. `builder` is `standard` or `wildfire`.
+- Scenario registry: `GET /api/v1/scenarios` returns the exact selection contract below. `id` is the stable slug used by the CLI, REST API, WebSocket API, and envelopes; `name` is display text. `entity_count` counts configured platform/site nodes and excludes generated environmental fire-cell entities.
+- Selection query: `GET /api/v1/snapshot?scenario=<id>` and `GET /api/v1/stream?scenario=<id>` select that registered scenario before returning/upgrading. Omitting `scenario` uses the current active/default scenario.
+- Explicit selection: `POST /api/v1/scenario` with `{"id":"<id>"}` returns `{"active":"<id>"}`.
 - Health: `GET /healthz` returns `{"status":"ok"}`.
-- Ordering: `sequence` increases by one per state frame in a server process. A reconnect starts with a new `hello`; clients replace their complete local view with every `state.payload` and may discard sequence numbers less than or equal to the last applied value.
+- Single-active prototype: the process runs exactly one simulation. A query or POST selecting another scenario replaces the running simulation for every client, publishes its initial state immediately, and resets `sequence` and `sim_time_s` to zero. Clients use the envelope `scenario` field to detect the change before applying per-scenario sequence ordering.
+- Ordering: within one active scenario run, `sequence` increases by one per state frame. A reconnect starts with a new `hello`; clients replace their complete local view with every `state.payload` and may discard sequence numbers less than or equal to the last applied value for the same `scenario`.
 - Time: `sim_time_s` is simulation seconds from scenario start, not wall time. CoT carries UTC wall time because TAK consumers require it.
+
+```json
+{
+  "active": "isr-relay-demo",
+  "scenarios": [
+    {
+      "id": "isr-relay-demo",
+      "name": "ISR Relay Demo",
+      "description": "Two ISR drones, a mobile relay, two people, and a C2 node with flapping Ditto links",
+      "entity_count": 6,
+      "default": true
+    },
+    {
+      "id": "wildfire-paradise",
+      "name": "Wildfire - Paradise",
+      "description": "Twelve UAS air tankers coordinate fire-suppression drops between Grass Valley AAB and Paradise",
+      "entity_count": 14,
+      "default": false
+    }
+  ]
+}
+```
 
 ### Envelope union
 
@@ -82,6 +107,7 @@ The public interface is `autonomy-sim/v1`. Additive fields may appear without a 
 {
   "schema": "autonomy-sim/v1",
   "message_type": "hello",
+  "scenario": "isr-relay-demo",
   "sequence": 0,
   "sim_time_s": 0.0,
   "payload": {
@@ -96,6 +122,7 @@ The public interface is `autonomy-sim/v1`. Additive fields may appear without a 
 {
   "schema": "autonomy-sim/v1",
   "message_type": "state",
+  "scenario": "isr-relay-demo",
   "sequence": 42,
   "sim_time_s": 8.4,
   "payload": {

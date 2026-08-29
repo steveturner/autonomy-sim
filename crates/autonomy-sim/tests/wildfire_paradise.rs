@@ -21,10 +21,16 @@ fn registry_exposes_chooseable_scenarios() {
     assert_eq!(
         descriptors
             .iter()
-            .map(|scenario| scenario.name.as_str())
+            .map(|scenario| scenario.id.as_str())
             .collect::<Vec<_>>(),
-        vec!["isr-relay-demo", "thin-slice", "wildfire-paradise"]
+        vec!["isr-relay-demo", "wildfire-paradise"]
     );
+    assert_eq!(descriptors[0].name, "ISR Relay Demo");
+    assert_eq!(descriptors[0].entity_count, 6);
+    assert!(descriptors[0].default);
+    assert_eq!(descriptors[1].name, "Wildfire - Paradise");
+    assert_eq!(descriptors[1].entity_count, 14);
+    assert!(!descriptors[1].default);
 }
 
 #[test]
@@ -52,6 +58,7 @@ fn wildfire_stream_contract_and_mission_cycle_run_end_to_end() {
     wildfire.spread_per_s = 0.0;
     let mut simulation = Simulation::try_new(&config).unwrap();
     let initial = simulation.snapshot().unwrap();
+    assert_eq!(initial.scenario, "wildfire-paradise");
     assert_eq!(initial.payload.fire_cells.len(), 9);
     assert_eq!(
         initial.payload.base.as_ref().unwrap().id,

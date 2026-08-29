@@ -322,6 +322,7 @@ impl Simulation {
         StateEnvelope {
             schema: SCHEMA,
             message_type: "state",
+            scenario: self.scenario_name.clone(),
             sequence: self.sequence,
             sim_time_s: self.sim_time_s,
             payload: StatePayload {

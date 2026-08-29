@@ -88,6 +88,15 @@ tail -f output/isr-demo.cot
 - `GET http://127.0.0.1:9000/api/v1/scenarios` — registered chooseable scenarios.
 - `ws://127.0.0.1:9000/api/v1/stream` — `hello`, immediate current `state`, then one complete `state` per simulation tick.
 
+Select the single active scenario through either snapshot or WebSocket query parameters:
+
+```bash
+curl --silent 'http://127.0.0.1:9000/api/v1/snapshot?scenario=wildfire-paradise' | jq
+# WebSocket: ws://127.0.0.1:9000/api/v1/stream?scenario=wildfire-paradise
+```
+
+Selection replaces the process-wide active simulation for all clients. The optional explicit switch endpoint is `POST /api/v1/scenario` with `{"id":"wildfire-paradise"}`. `GET /api/v1/scenarios` reports the current `active` ID, and every hello/state envelope carries the same stable scenario slug.
+
 The stable `autonomy-sim/v1` message schema, enum values, units, ordering, and CZML projection are defined in [ARCHITECTURE.md](ARCHITECTURE.md). State frames make entities, Ditto peer identities, document replicas, replication events, current carrier links, traffic aggregates, and CZML explicit.
 
 Inspect a snapshot:

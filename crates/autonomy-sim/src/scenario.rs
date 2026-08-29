@@ -8,13 +8,20 @@ use crate::{
     swarm::FlockingConfig,
 };
 
-const REGISTERED_SCENARIOS: &[(&str, &str, ScenarioBuilder)] = &[
-    ("isr-relay-demo", "isr-demo.toml", ScenarioBuilder::Standard),
-    ("thin-slice", "thin-slice.toml", ScenarioBuilder::Standard),
+const REGISTERED_SCENARIOS: &[(&str, &str, &str, ScenarioBuilder, bool)] = &[
+    (
+        "isr-relay-demo",
+        "ISR Relay Demo",
+        "isr-demo.toml",
+        ScenarioBuilder::Standard,
+        true,
+    ),
     (
         "wildfire-paradise",
+        "Wildfire - Paradise",
         "wildfire-paradise.toml",
         ScenarioBuilder::Wildfire,
+        false,
     ),
 ];
 
@@ -28,9 +35,11 @@ pub enum ScenarioBuilder {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ScenarioDescriptor {
+    pub id: String,
     pub name: String,
     pub description: String,
-    pub builder: ScenarioBuilder,
+    pub entity_count: usize,
+    pub default: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -56,15 +65,15 @@ impl ScenarioRegistry {
         let (path, registered_builder) = if direct.exists() || selector.ends_with(".toml") {
             (direct.to_path_buf(), None)
         } else {
-            let (_, file, builder) = REGISTERED_SCENARIOS
+            let (_, _, file, builder, _) = REGISTERED_SCENARIOS
                 .iter()
-                .find(|(name, _, _)| *name == selector)
+                .find(|(id, _, _, _, _)| *id == selector)
                 .ok_or_else(|| {
                     anyhow::anyhow!(
                         "unknown scenario '{selector}'; available: {}",
                         REGISTERED_SCENARIOS
                             .iter()
-                            .map(|(name, _, _)| *name)
+                            .map(|(id, _, _, _, _)| *id)
                             .collect::<Vec<_>>()
                             .join(", ")
                     )
@@ -87,21 +96,23 @@ impl ScenarioRegistry {
     pub fn descriptors(&self) -> Result<Vec<ScenarioDescriptor>> {
         REGISTERED_SCENARIOS
             .iter()
-            .map(|(registered_name, file, builder)| {
+            .map(|(registered_id, display_name, file, builder, is_default)| {
                 let config = ScenarioConfig::from_path(self.directory.join(file))?;
-                if config.scenario.name != *registered_name {
+                if config.scenario.name != *registered_id {
                     bail!(
-                        "registered scenario '{registered_name}' has TOML name '{}'",
+                        "registered scenario '{registered_id}' has TOML name '{}'",
                         config.scenario.name
                     );
                 }
                 if config.scenario.builder != *builder {
-                    bail!("registered scenario '{registered_name}' has mismatched builder");
+                    bail!("registered scenario '{registered_id}' has mismatched builder");
                 }
                 Ok(ScenarioDescriptor {
-                    name: config.scenario.name,
+                    id: config.scenario.name,
+                    name: (*display_name).into(),
                     description: config.scenario.description,
-                    builder: *builder,
+                    entity_count: config.nodes.len(),
+                    default: *is_default,
                 })
             })
             .collect()

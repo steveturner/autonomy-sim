@@ -12,6 +12,7 @@ pub const SCHEMA: &str = "autonomy-sim/v1";
 pub struct HelloEnvelope {
     pub schema: &'static str,
     pub message_type: &'static str,
+    pub scenario: String,
     pub sequence: u64,
     pub sim_time_s: f64,
     pub payload: HelloPayload,
@@ -28,6 +29,7 @@ pub struct HelloPayload {
 pub struct StateEnvelope {
     pub schema: &'static str,
     pub message_type: &'static str,
+    pub scenario: String,
     pub sequence: u64,
     pub sim_time_s: f64,
     pub payload: StatePayload,
@@ -109,6 +111,7 @@ impl StateEnvelope {
         Self {
             schema: SCHEMA,
             message_type: "state",
+            scenario: String::new(),
             sequence: 0,
             sim_time_s: 0.0,
             payload: StatePayload::default(),
