@@ -1,0 +1,14 @@
+[package]
+name = "autonomy-sim-net-sigforge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "SigForge REST adapter for autonomy-sim's NetworkBackend"
+
+[dependencies]
+autonomy-sim = { path = "../autonomy-sim" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
