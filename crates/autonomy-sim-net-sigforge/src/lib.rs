@@ -449,7 +449,9 @@ fn sorted_entities<'a>(left: &'a Entity, right: &'a Entity) -> (&'a Entity, &'a 
 mod tests {
     use std::{collections::VecDeque, sync::Arc};
 
-    use autonomy_sim::model::{Domain, EntityKind, Kinematics, MissionState, Position};
+    use autonomy_sim::model::{
+        Affiliation, Domain, EntityKind, Kinematics, MissionState, Position,
+    };
 
     use super::*;
 
@@ -478,7 +480,10 @@ mod tests {
         Entity {
             id: id.into(),
             name: id.into(),
-            kind: EntityKind::Drone,
+            kind: EntityKind::Uas,
+            affiliation: Affiliation::Friendly,
+            sidc: String::new(),
+            icon_hint: String::new(),
             domain: Domain::Air,
             position: Position {
                 lat_deg: 34.0,
@@ -487,6 +492,11 @@ mod tests {
             },
             kinematics: Kinematics::default(),
             mission: MissionState::default(),
+            mission_role: String::new(),
+            mission_state: String::new(),
+            heading_deg: 0.0,
+            retardant_pct: None,
+            intensity: None,
             radios: vec![Radio {
                 link_type: LinkType::Mesh,
                 range_m: 10.0,

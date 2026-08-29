@@ -7,7 +7,9 @@ use std::{
 
 use autonomy_sim::{
     ditto::{TELEMETRY_COLLECTION, peer_id},
-    model::{Domain, Entity, EntityKind, Kinematics, LinkType, MissionState, Position},
+    model::{
+        Affiliation, Domain, Entity, EntityKind, Kinematics, LinkType, MissionState, Position,
+    },
     network::{LinkState, LinkStatus},
 };
 use autonomy_sim_ditto_real::{RealDittoConfig, RealDittoTransport};
@@ -17,11 +19,19 @@ fn entity(id: &str) -> Entity {
     Entity {
         id: id.into(),
         name: id.into(),
-        kind: EntityKind::Drone,
+        kind: EntityKind::Uas,
+        affiliation: Affiliation::Friendly,
+        sidc: String::new(),
+        icon_hint: String::new(),
         domain: Domain::Air,
         position: Position::default(),
         kinematics: Kinematics::default(),
         mission: MissionState::default(),
+        mission_role: String::new(),
+        mission_state: String::new(),
+        heading_deg: 0.0,
+        retardant_pct: None,
+        intensity: None,
         radios: Vec::new(),
     }
 }

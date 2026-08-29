@@ -33,4 +33,3 @@ required-features = ["dittoffi"]
 name = "real_peers"
 path = "tests/real_peers.rs"
 required-features = ["dittoffi"]
-
