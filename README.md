@@ -16,7 +16,13 @@ Install the frontend packages once:
 make setup
 ```
 
-Start the simulator in terminal 1:
+Start the complete demo with one command:
+
+```bash
+make live
+```
+
+This runs the simulator/WebSocket service and Vite together. To run them in separate terminals instead, start the simulator in terminal 1:
 
 ```bash
 make demo

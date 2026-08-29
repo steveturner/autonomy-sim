@@ -1,7 +1,13 @@
-.PHONY: setup demo frontend check clean-output
+.PHONY: setup live demo frontend check clean-output
 
 setup:
 	npm --prefix frontend install
+
+live:
+	@set -eu; \
+		cargo run -- --scenario scenarios/isr-demo.toml & sim_pid=$$!; \
+		trap 'kill "$$sim_pid" 2>/dev/null || true' EXIT INT TERM; \
+		npm --prefix frontend run dev
 
 demo:
 	cargo run -- --scenario scenarios/isr-demo.toml
@@ -17,4 +23,3 @@ check:
 
 clean-output:
 	find output -type f -name '*.cot' -delete 2>/dev/null || true
-
