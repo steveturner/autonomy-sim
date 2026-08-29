@@ -348,6 +348,7 @@ function collectEffectSpecs(
 ): EffectVisualSpec[] {
   const specs: EffectVisualSpec[] = [];
   const byEntityId = new Map(entities.map((entity) => [entity.id, entity]));
+  const fireCellIds = new Set(fireCells.map((cell) => cell.id));
   const positionFor = (id: string | undefined, fallback?: EntityState['position']) => (
     (id && byEntityId.get(id)?.position) || fallback
   );
@@ -383,7 +384,7 @@ function collectEffectSpecs(
 
   for (const entity of entities) {
     const nestedEffects = entity.effects || [];
-    if (entity.kind === 'fire') {
+    if (entity.kind === 'fire' && !fireCellIds.has(entity.id)) {
       const intensity = normalizedIntensity(entity.intensity);
       const color = Cesium.Color.lerp(
         Cesium.Color.fromCssColorString('#fbbf24'),
