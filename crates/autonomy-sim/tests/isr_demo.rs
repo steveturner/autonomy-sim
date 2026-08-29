@@ -11,14 +11,24 @@ fn demo_exercises_every_transport_and_link_flaps() {
     let mut transport_types = BTreeSet::new();
     let mut down_events = 0;
     let mut up_events = 0;
+    let mut links_that_dropped = BTreeSet::new();
+    let mut restored_links = BTreeSet::new();
 
     for _ in 0..1_100 {
         let frame = simulation.tick().unwrap();
         transport_types.extend(frame.payload.links.iter().map(|link| link.link_type));
         for event in frame.payload.link_events {
             match event.state {
-                autonomy_sim::network::LinkStatus::Up => up_events += 1,
-                autonomy_sim::network::LinkStatus::Down => down_events += 1,
+                autonomy_sim::network::LinkStatus::Up => {
+                    up_events += 1;
+                    if links_that_dropped.contains(&event.link_id) {
+                        restored_links.insert(event.link_id);
+                    }
+                }
+                autonomy_sim::network::LinkStatus::Down => {
+                    down_events += 1;
+                    links_that_dropped.insert(event.link_id);
+                }
             }
         }
     }
@@ -30,6 +40,10 @@ fn demo_exercises_every_transport_and_link_flaps() {
     );
     assert!(
         up_events >= 2,
-        "expected multiple link restorations, got {up_events}"
+        "expected multiple link-up transitions, got {up_events}"
+    );
+    assert!(
+        !restored_links.is_empty(),
+        "expected at least one link to drop and later return"
     );
 }
