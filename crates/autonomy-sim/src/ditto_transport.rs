@@ -15,8 +15,7 @@ use crate::{
 
 #[cfg(feature = "ditto-real")]
 use crate::{
-    ditto::{DittoReplicationEvent, peer_id},
-    model::EntityKind,
+    ditto::{DittoReplicationEvent, is_ditto_peer, peer_id},
     network::LinkStatus,
 };
 
@@ -27,6 +26,9 @@ pub struct RealDittoOptions {
     pub storage_root: PathBuf,
     pub port_base: u16,
     pub listen_ip: String,
+    /// Collections exposed through the real transport. An empty list retains
+    /// the transport crate's default autonomy/wildfire collection set.
+    pub collections: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -46,6 +48,7 @@ pub struct DittoRuntime {
 struct RealState {
     transport: autonomy_sim_ditto_real::RealDittoTransport,
     entity_ids: std::collections::BTreeSet<String>,
+    collections: std::collections::BTreeSet<String>,
     fallback_entity_id: String,
     written_revisions: BTreeMap<String, u64>,
     previous_replicas: BTreeMap<String, std::collections::BTreeSet<String>>,
@@ -78,15 +81,21 @@ impl DittoRuntime {
                 {
                     let peers: Vec<_> = entities
                         .iter()
-                        .filter(|entity| {
-                            !matches!(entity.kind, EntityKind::Fire | EntityKind::Waypoint)
-                        })
+                        .filter(|entity| is_ditto_peer(entity))
                         .map(|entity| autonomy_sim_ditto_real::RealDittoEntity {
                             entity_id: entity.id.clone(),
                             peer_id: peer_id(&entity.id),
                         })
                         .collect();
                     let entity_ids = peers.iter().map(|peer| peer.entity_id.clone()).collect();
+                    let collections: std::collections::BTreeSet<_> =
+                        if options.collections.is_empty() {
+                            autonomy_sim_ditto_real::default_collections()
+                                .into_iter()
+                                .collect()
+                        } else {
+                            options.collections.iter().cloned().collect()
+                        };
                     let storage_root = options.storage_root.join(safe_segment(scenario_name));
                     let transport = autonomy_sim_ditto_real::RealDittoTransport::new(
                         &peers,
@@ -96,6 +105,7 @@ impl DittoRuntime {
                             storage_root,
                             port_base: options.port_base,
                             listen_ip: options.listen_ip.clone(),
+                            collections: options.collections.clone(),
                         },
                     )?;
                     Ok(Self {
@@ -103,6 +113,7 @@ impl DittoRuntime {
                         real: Some(RealState {
                             transport,
                             entity_ids,
+                            collections,
                             fallback_entity_id: gateway_entity_id.into(),
                             written_revisions: BTreeMap::new(),
                             previous_replicas: BTreeMap::new(),
@@ -153,6 +164,9 @@ impl DittoRuntime {
     ) -> Result<bool> {
         #[cfg(feature = "ditto-real")]
         if let Some(real) = &self.real {
+            if !real.collections.contains(collection) {
+                return Ok(false);
+            }
             return Ok(real
                 .transport
                 .read_document(entity_id, collection, document_id)?
@@ -186,6 +200,7 @@ impl RealState {
         let metadata: BTreeMap<_, _> = behavioral
             .documents
             .iter()
+            .filter(|document| self.collections.contains(&document.collection))
             .map(|document| {
                 (
                     document_key(&document.collection, &document.document_id),
@@ -194,6 +209,9 @@ impl RealState {
             })
             .collect();
         for document in &behavioral.documents {
+            if !self.collections.contains(&document.collection) {
+                continue;
+            }
             let key = document_key(&document.collection, &document.document_id);
             if self.written_revisions.get(&key) == Some(&document.revision) {
                 continue;

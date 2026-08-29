@@ -2,7 +2,7 @@
 
 ## Purpose and safety boundary
 
-`autonomy-sim` is a deterministic simulation and visualization engine for defensive uncrewed-system coordination, ISR, communications relay, and C2 interoperability. Phase 1 deliberately contains no target prosecution, weapon model, engagement objective, or autonomous use-of-force decision. Human control is a hard mission constraint: autonomy may navigate, search, loiter, and extend communications, but it cannot turn a sensed object into an engagement action.
+`autonomy-sim` is a deterministic simulation and visualization engine for defensive uncrewed-system coordination, ISR, communications relay, civilian-site force protection, and C2 interoperability. Its C-UAS scenario uses only abstract state transitions and seeded effect probabilities. It contains no fire-control solution, ballistics, aiming, guidance, real targeting logic, or autonomous real-world use-of-force decision.
 
 ## Layered design
 
@@ -16,11 +16,12 @@ entity + fixed-step kinematics <--- behavior tree / mission playbooks
 NetworkBackend <--- PropagationModel
     |                free-space/range now; indoor, urban, ns-3 later
     +--- analytic mesh (built in, zero external dependencies)
-    +--- SigForge adapter (Phase 1 interface stub; real API in Phase 2)
+    +--- SigForge REST adapter (optional; selected by CLI/config)
     |
     v
 Ditto peer + document replication model
     |       C2 tasking, PLI, tracks, telemetry; eventual convergence in DDIL
+    +--- analytic model or real Ditto small peers
     +----------> versioned state frames ----------> Axum REST/WebSocket
     |                                                     |
     +--> CoT/TAK gateway <--> TAKServer/WebTAK             +--> CesiumJS 2D/3D
@@ -28,7 +29,7 @@ Ditto peer + document replication model
 
 ### Entity and agent layer
 
-An `Entity` has a stable string ID, display name, kind, affiliation, MIL-STD-2525C SIDC, domain (`ground`, `air`, `maritime`, or `space`), WGS84 position, velocity, heading, configured radios, mission role, and mission state. Active platform/site entities are Ditto peers with stable ID `ditto/<entity-id>`; environmental `fire` and navigation `waypoint` entities are document subjects rather than radio peers. There is no separate centralized messaging node. A fixed-step scheduler owns simulation time. Every tick is ordered: tick behavior trees or the wildfire mission FSM, integrate kinematics, update the fire model, evaluate peer links, update local Ditto documents, replicate documents over available links, update convergence, export gateway-visible documents to CoT, and publish a state frame. Scenario seed and tick size make analytic runs reproducible.
+An `Entity` has a stable string ID, display name, kind, affiliation, MIL-STD-2525C SIDC, domain (`ground`, `air`, `maritime`, or `space`), WGS84 position, velocity, heading, configured radios, mission role, and mission state. Radio-equipped autonomy/defender nodes are Ditto peers with stable ID `ditto/<entity-id>`. Environmental `fire`, navigation `waypoint`, protected geography, and hostile `threat_uas` tracks are document subjects or observations, never Ditto peers. There is no separate centralized messaging node. A fixed-step scheduler owns simulation time. Every tick is ordered: tick behavior trees or a scenario FSM, integrate abstract motion/state, evaluate defender peer links, update local Ditto documents, replicate documents over available links, update convergence, export gateway-visible documents to CoT, and publish a state frame. Scenario seed and tick size make analytic runs reproducible.
 
 ### Behavior-tree and mission layer
 
@@ -38,6 +39,7 @@ Behavior trees use `Sequence`, `Fallback`, and `Parallel` composites with explic
 - `persistent_surveillance`: transit to and loiter around an ISR point.
 - `comms_relay`: move toward the midpoint of disconnected peers and hold when connectivity is restored.
 - `firefighting`: run the Rust tanker FSM `holding → enroute_to_fire → on_station → dropping → egress → enroute_to_base → reloading → holding`. Flocking combines separation, alignment, cohesion, and goal steering under configured neighbor, speed, and turn-rate limits. The Grass Valley base limits concurrent reload slots; a drop reduces the assigned Paradise fire cell's intensity.
+- `cuas_threat`: drives a simulated hostile track through the defensive visualization funnel. The Rust C-UAS runtime performs range-triggered detection, capacity-limited EW assignment, abstract time-to-intercept, and an abstract final layer. All outcomes are deterministic seeded probabilities; no layer computes a firing solution or vehicle guidance command.
 
 The tree is an execution structure, not an optimizer. Later playbook selection can use MAP-Elites, but candidate generation cannot relax safety constraints or human authority.
 
@@ -47,13 +49,13 @@ The tree is an execution structure, not an optimizer. Later playbook selection c
 
 The built-in analytic backend combines radio compatibility with a `PropagationModel`. Its outdoor model uses geodesic/slant distance, configured range, and a monotonic path-loss-inspired quality curve. The separate propagation trait keeps terrain/LOS, indoor body blocking, urban ray models, and ns-3 integration replaceable without changing missions or the API.
 
-The `SigForgeBackend` Phase 1 stub implements the same trait but returns a clear unavailable error. Phase 2 will register NEMs through SigForge REST/gRPC, publish position events, and consume its link matrix/WebSocket. IDs remain autonomy-sim IDs at this boundary; adapter-owned maps translate them to NEM IDs.
+The simulator CLI owns the selector. The analytic backend is the dependency-free default. `--network-backend sigforge` constructs the SigForge REST backend, registers radio-equipped nodes against existing NEMs, publishes their positions, and consumes bidirectional SINR. IDs remain autonomy-sim IDs at this boundary; the adapter-owned map translates them to NEM IDs.
 
 ### Ditto peer and document layer
 
-Ditto is the primary inter-node communication model. C2 tasking, PLI, tracks, and platform telemetry live in the collections `c2.tasking`, `c2.pli`, `c2.tracks`, and `telemetry.platform`. Wildfire coordination adds `mission.fire_cells`, `mission.base_queue`, and `mission.drop_assignments`; document `value` carries the fire cell, slot/queue, and tanker claim/completion state described below. The AAB supervisor authors fire-cell and base-queue documents, while each tanker authors its drop-assignment document. Each peer updates its locally authored documents, discovers reachable peers from current `NetworkBackend` links, and exchanges newer document revisions within link quality/capacity budgets. When two peers have several carriers up, Phase 1 moves document revisions over the highest-quality carrier and accounts for discovery/keepalive overhead on the others. Replicas remain available while disconnected and eventually converge when a path returns; no central broker is required.
+Ditto is the primary inter-node communication model. C2 tasking, PLI, tracks, and platform telemetry live in the collections `c2.tasking`, `c2.pli`, `c2.tracks`, and `telemetry.platform`. Wildfire coordination adds `mission.fire_cells`, `mission.base_queue`, and `mission.drop_assignments`. C-UAS defender coordination adds `cuas.tracks`, `cuas.ew_assignments`, and `cuas.engagements`. Radar/EO defender peers author hostile-track documents; jammer peers author capacity-limited EW assignments; interceptor and abstract final-layer peers author engagement-status documents. Threats never author or receive Ditto documents. Each peer updates its locally authored documents, discovers reachable peers from current `NetworkBackend` links, and exchanges newer documents over available paths. Replicas remain available while disconnected and eventually converge when a path returns; no central broker is required.
 
-Phase 1 models CRDT behavior at the document/revision level: peer discovery, replica watermarks, bounded per-link propagation, pending-document counts, and convergence state. It intentionally does not embed `dittoffi`. Phase 2+ will replace this behavioral model with real Ditto small peers whose transports run through SigForge/CORE-EMANE, following the `ditto-barrage-*` scale-test pattern. The wire contract remains the observation boundary for both implementations.
+`--ditto behavioral` is the CI-safe default and models CRDT behavior at the document/revision level: peer discovery, replica watermarks, bounded per-link propagation, pending-document counts, and convergence. `--ditto real` is feature-gated; for `cuas-stadium` it sets `RealDittoConfig.collections` to exactly `cuas.tracks`, `cuas.ew_assignments`, and `cuas.engagements`, creates one real Ditto small peer per radio-equipped friendly defender, applies defender-only `LinkState` paths to explicit TCP transports, writes the same coordination documents, and reads peer/document convergence back through the stable wire boundary.
 
 ### C2/TAK gateway
 
@@ -95,6 +97,13 @@ The public interface is `autonomy-sim/v1`. Additive fields may appear without a 
       "name": "Wildfire - Paradise",
       "description": "Twelve UAS air tankers coordinate fire-suppression drops between Grass Valley AAB and Paradise",
       "entity_count": 14,
+      "default": false
+    },
+    {
+      "id": "cuas-stadium",
+      "name": "C-UAS Stadium Defense",
+      "description": "Layered defensive C-UAS funnel protects a World Cup stadium using real-Ditto-coordinated sensors, EW, interceptors, and an abstract last layer",
+      "entity_count": 17,
       "default": false
     }
   ]
@@ -174,6 +183,7 @@ The canonical entity fields and enum spellings are:
 - `icon_hint`: stable renderer fallback string; the SIDC remains authoritative.
 - `mission_role`: free string such as `tanker`, `leadplane`, `scout`, `relay`, or `air_attack_base`.
 - `mission_state`: current leaf/FSM string. Wildfire tanker values are exactly `holding`, `enroute_to_fire`, `on_station`, `dropping`, `egress`, `enroute_to_base`, or `reloading`.
+- C-UAS threat `mission_state` values are exactly `inbound`, `detected`, `jammed`, `leaking`, `intercepted`, `engaged_gun`, `neutralized`, or `leaked`. The two internal leak stages intentionally share the stable public value `leaking`.
 - `heading_deg`: canonical top-level heading in degrees clockwise from true north. It mirrors `kinematics.heading_deg`; both remain in v1 for compatibility.
 - `retardant_pct`: optional number in `[0,100]`, present on air tankers and absent on other kinds.
 - `intensity`: optional number in `[0,100]`, present on `fire` entities and absent on other kinds.
@@ -205,6 +215,16 @@ The canonical entity fields and enum spellings are:
 
 Fire-cell `status` is `available`, `assigned`, `dropping`, or `contained`. `assigned_tanker` is a tanker entity ID or `null`. `occupied_slots` and `queue` contain tanker entity IDs; queue order is FIFO.
 
+### C-UAS coordination documents
+
+The C-UAS scenario adds no top-level effect array. Its canonical public funnel is each hostile entity's `mission_state`; defender coordination is visible through the existing `ditto_documents` array:
+
+- `cuas.tracks`: `threat_id`, current `position`, public `mission_state`, `detected_at_s`, and the fixed simulation classification `simulated_hostile_uas`.
+- `cuas.ew_assignments`: `threat_id`, nullable `assigned_asset`, `capacity_limited`, `abstract_effect: true`, and `status` (`assigned`, `effective`, `leaked`, or `capacity_leak`).
+- `cuas.engagements`: `threat_id`, `layer` (`interceptor` or `gun`), nullable `assigned_asset`, optional `capacity_limited`, `abstract_effect: true`, and `status` (`assigned`, `engaged`, `effective`, `leaked`, or `capacity_leak`).
+
+These documents deliberately contain no aim point, firing solution, ballistic parameter, guidance command, or real-system control field. `author_peer_id`, `replicated_to`, and `converged` retain their normal wire meanings and show which friendly defender peers have received each document.
+
 ### Link state and transitions
 
 Every configured compatible radio pair is present in `links`, including down links. Endpoint IDs are lexically sorted. `id` is stable and formatted `link/<link_type>/<a>/<b>`. The corresponding peer IDs are explicit; each record is a Ditto replication path over the named carrier. Quality and loss are bounded `[0,1]`; capacity and traffic use bits per second.
@@ -228,7 +248,7 @@ Every configured compatible radio pair is present in `links`, including down lin
 
 ### Ditto peer state
 
-`ditto_peers` contains one record per active platform/site entity; environmental `fire` and navigation `waypoint` entities do not create peers. `connected_peer_ids` is derived from all current up links, regardless of carrier. `document_count` counts locally present latest-or-stale replicas; `pending_documents` counts known global revisions not yet at that peer. `converged` is true when the peer holds the latest revision of every document currently known to the simulation.
+`ditto_peers` contains one record per radio-equipped autonomy/defender node. Environmental `fire`, navigation `waypoint`, `protected_site`, and hostile `threat_uas` entities do not create peers. `connected_peer_ids` is derived from all current up links, regardless of carrier. `document_count` counts locally present latest-or-stale replicas; `pending_documents` counts known global revisions not yet at that peer. `converged` is true when the peer holds the latest revision of every document currently known to the selected transport.
 
 ```json
 {
@@ -249,7 +269,7 @@ Every configured compatible radio pair is present in `links`, including down lin
 
 ### Ditto document state and replication events
 
-`ditto_documents` describes the latest known logical revision and which peers have that revision. Phase 1 uses single-author documents and scalar revisions as a behavioral stand-in for real Ditto CRDT metadata; real version vectors/conflict semantics arrive with `dittoffi`. `converged` means all scenario peers hold the latest revision.
+`ditto_documents` describes the latest observed logical revision and which peers have that revision. The analytic transport uses single-author scalar revisions. The real transport preserves the same scalar field as an observation sequence while Ditto owns the actual CRDT metadata and convergence. `converged` means all participating autonomy/defender peers expose the same observed document.
 
 ```json
 {

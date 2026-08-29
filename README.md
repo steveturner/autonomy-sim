@@ -28,6 +28,26 @@ Run the Paradise wildfire swarm with the analytic backend (no CORE/EMANE require
 make wildfire
 ```
 
+Run the defensive C-UAS stadium funnel with dependency-free analytic coordination:
+
+```bash
+make cuas
+```
+
+To run the defender coordination over actual Ditto small peers, set `DITTO_SOURCE_DIR` and an offline `DITTO_LICENSE`, then run:
+
+```bash
+make demo-cuas
+```
+
+That target builds `dittoffi`, selects `--ditto real`, creates Ditto peers only for the friendly radar/EW/interceptor/abstract-final-layer defenders, and transmits `cuas.tracks`, `cuas.ew_assignments`, and `cuas.engagements`. Hostile tracks have no radios and no Ditto peer.
+
+The license-gated automated convergence case uses the same real transport and asserts that all three collections reach all eight defenders:
+
+```bash
+DITTO_SOURCE_DIR=/home/sturner/projects/ditto make test-cuas-real
+```
+
 Use `make wildfire-live` to start both the wildfire simulator and frontend. Both targets accept `HOST=0.0.0.0` for the existing trusted-LAN profile.
 
 This runs the simulator/WebSocket service and Vite together. To run them in separate terminals instead, start the simulator in terminal 1:
@@ -144,12 +164,12 @@ waypoints = [
 
 The analytic network and behavioral Ditto transport remain the defaults. Override them independently at startup with `--network-backend analytic|sigforge` and `--ditto behavioral|real`; `make demo-sigforge` and `make demo-ditto-real` provide the corresponding runnable entry points.
 
-Registered scenario names can be passed without a path, for example `cargo run -- --scenario wildfire-paradise`. Kinds are `uas`, `air_tanker`, `rotary`, `person`, `ground_vehicle`, `base`, `fire`, `waypoint`, `threat_uas`, `radar_sensor`, `ew_jammer`, `interceptor`, `gun_system`, and `protected_site`; domains are `ground`, `air`, `maritime`, and `space`. Radios use `mesh`, `cellular`, `satcom`, or `ble`. Standard playbooks are `hold`, `area_search`, `persistent_surveillance`, and `comms_relay`; the `wildfire` builder adds `firefighting`. Invalid scenarios fail before the server binds.
+Registered scenario names can be passed without a path, for example `cargo run -- --scenario wildfire-paradise`. Kinds are `uas`, `air_tanker`, `rotary`, `person`, `ground_vehicle`, `base`, `fire`, `waypoint`, `threat_uas`, `radar_sensor`, `ew_jammer`, `interceptor`, `gun_system`, and `protected_site`; domains are `ground`, `air`, `maritime`, and `space`. Radios use `mesh`, `cellular`, `satcom`, or `ble`. Standard playbooks are `hold`, `area_search`, `persistent_surveillance`, and `comms_relay`; the `wildfire` builder adds `firefighting`, and the defensive `cuas` builder adds abstract `cuas_threat` funnel motion. Invalid scenarios fail before the server binds.
 
 Run another scenario or override the API address directly:
 
 ```bash
-cargo run -- --scenario scenarios/thin-slice.toml --bind 127.0.0.1:9100
+cargo run -p autonomy-sim -- --scenario scenarios/thin-slice.toml --bind 127.0.0.1:9100
 ```
 
 When the backend port changes, set `VITE_API_HOST=127.0.0.1:9100` for Vite. `VITE_API_URL=http://127.0.0.1:9100` and the lower-level `VITE_WS_URL=ws://127.0.0.1:9100/api/v1/stream` are also supported.

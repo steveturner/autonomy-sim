@@ -4,7 +4,10 @@ use anyhow::{Result, anyhow};
 use serde::Serialize;
 
 use crate::{
-    ditto::{BASE_QUEUE_COLLECTION, DROP_ASSIGNMENTS_COLLECTION, FIRE_CELLS_COLLECTION},
+    ditto::{
+        BASE_QUEUE_COLLECTION, CoordinationDocument, DROP_ASSIGNMENTS_COLLECTION,
+        FIRE_CELLS_COLLECTION,
+    },
     model::{Entity, EntityKind, Kinematics, Position},
     scenario::WildfireConfig,
     swarm::{BoidState, steer},
@@ -53,14 +56,6 @@ pub struct EntityUpdate {
     pub kinematics: Kinematics,
     pub mission_state: String,
     pub retardant_pct: f64,
-}
-
-#[derive(Clone, Debug)]
-pub struct CoordinationDocument {
-    pub collection: &'static str,
-    pub document_id: String,
-    pub author_entity_id: String,
-    pub value: serde_json::Value,
 }
 
 pub struct WildfireTick {

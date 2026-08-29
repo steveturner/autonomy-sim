@@ -39,6 +39,7 @@ fn selected_real_transport_drives_simulation_observations() {
             storage_root: storage.path().into(),
             port_base: available_port_block(config.nodes.len() as u16),
             listen_ip: "127.0.0.1".into(),
+            collections: Vec::new(),
         }),
         ..SimulationOptions::default()
     };

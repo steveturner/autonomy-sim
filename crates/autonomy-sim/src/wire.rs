@@ -1,7 +1,7 @@
 use serde::Serialize;
 
 use crate::{
-    ditto::{DittoDocumentState, DittoPeerState, DittoReplicationEvent, peer_id},
+    ditto::{DittoDocumentState, DittoPeerState, DittoReplicationEvent, is_ditto_peer, peer_id},
     model::{Entity, LinkType, Position},
     network::{LinkEvent, LinkState, LinkStatus, TrafficState},
 };
@@ -126,11 +126,7 @@ pub fn entity_czml(entity: &Entity) -> serde_json::Value {
         crate::model::Domain::Maritime => [49, 120, 198, 255],
         crate::model::Domain::Space => [255, 202, 58, 255],
     };
-    let ditto_peer_id = (!matches!(
-        entity.kind,
-        crate::model::EntityKind::Fire | crate::model::EntityKind::Waypoint
-    ))
-    .then(|| peer_id(&entity.id));
+    let ditto_peer_id = is_ditto_peer(entity).then(|| peer_id(&entity.id));
     serde_json::json!({
         "id": format!("entity/{}", entity.id),
         "name": entity.name,

@@ -35,3 +35,8 @@ tokio = { workspace = true, features = ["test-util"] }
 name = "real_ditto_runtime"
 path = "tests/real_ditto_runtime.rs"
 required-features = ["ditto-real"]
+
+[[test]]
+name = "real_cuas"
+path = "tests/real_cuas.rs"
+required-features = ["ditto-real"]

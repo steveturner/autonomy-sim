@@ -14,9 +14,34 @@ pub const TELEMETRY_COLLECTION: &str = "telemetry.platform";
 pub const FIRE_CELLS_COLLECTION: &str = "mission.fire_cells";
 pub const BASE_QUEUE_COLLECTION: &str = "mission.base_queue";
 pub const DROP_ASSIGNMENTS_COLLECTION: &str = "mission.drop_assignments";
+pub const CUAS_TRACKS_COLLECTION: &str = "cuas.tracks";
+pub const CUAS_EW_ASSIGNMENTS_COLLECTION: &str = "cuas.ew_assignments";
+pub const CUAS_ENGAGEMENTS_COLLECTION: &str = "cuas.engagements";
+
+#[derive(Clone, Debug)]
+pub struct CoordinationDocument {
+    pub collection: &'static str,
+    pub document_id: String,
+    pub author_entity_id: String,
+    pub value: serde_json::Value,
+}
 
 pub fn peer_id(entity_id: &str) -> String {
     format!("ditto/{entity_id}")
+}
+
+/// Returns whether an entity participates in the defender/autonomy Ditto mesh.
+/// Environmental subjects, protected geography, and hostile simulated tracks
+/// are documents or observations, never peers.
+pub fn is_ditto_peer(entity: &Entity) -> bool {
+    !entity.radios.is_empty()
+        && !matches!(
+            entity.kind,
+            EntityKind::Fire
+                | EntityKind::Waypoint
+                | EntityKind::ThreatUas
+                | EntityKind::ProtectedSite
+        )
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -88,7 +113,7 @@ impl DittoModel {
     ) -> Self {
         let entity_to_peer: BTreeMap<_, _> = entities
             .iter()
-            .filter(|entity| !matches!(entity.kind, EntityKind::Fire | EntityKind::Waypoint))
+            .filter(|entity| is_ditto_peer(entity))
             .map(|entity| (entity.id.clone(), peer_id(&entity.id)))
             .collect();
         let peer_revisions = entity_to_peer.values().cloned().map(|id| (id, 0)).collect();
@@ -305,6 +330,18 @@ impl DittoModel {
             })
     }
 
+    pub fn read_document(
+        &self,
+        entity_id: &str,
+        collection: &str,
+        document_id: &str,
+    ) -> Option<serde_json::Value> {
+        let peer = self.entity_to_peer.get(entity_id)?;
+        let document = self.documents.get(&document_key(collection, document_id))?;
+        (document.peer_revisions.get(peer).copied().unwrap_or(0) > 0)
+            .then(|| document.value.clone())
+    }
+
     pub fn upsert_document(
         &mut self,
         collection: &str,
@@ -404,7 +441,12 @@ mod tests {
             heading_deg: 0.0,
             retardant_pct: None,
             intensity: None,
-            radios: Vec::new(),
+            radios: vec![crate::model::Radio {
+                link_type: LinkType::Mesh,
+                range_m: 1_000.0,
+                capacity_bps: 1_000_000,
+                base_latency_ms: 1.0,
+            }],
         }
     }
 

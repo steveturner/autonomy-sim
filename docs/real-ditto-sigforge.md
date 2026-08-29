@@ -26,6 +26,14 @@ Override `DITTO_BUILD_TARGET_DIR=/another/build/directory` if the default artifa
 
 The tests start fresh native peer processes. One verifies direct replication; another first synchronizes over a live link, removes that link, proves that a newly written document stays isolated, restores the link, and proves eventual convergence. A full-simulator test selects the real transport and verifies that scenario documents replicate between real peers.
 
+The defensive stadium path has a focused license-gated case:
+
+```bash
+make test-cuas-real DITTO_SOURCE_DIR=/home/sturner/projects/ditto
+```
+
+It configures `RealDittoConfig.collections` to exactly `cuas.tracks`, `cuas.ew_assignments`, and `cuas.engagements`, creates only the eight radio-equipped friendly defenders as peers, applies only defender-to-defender links, and asserts real convergence of all three collections. Hostile simulated tracks and the protected site are never Ditto peers.
+
 Run the complete simulator with the real transport selected:
 
 ```bash
@@ -62,7 +70,7 @@ env -u NO_COLOR cargo run -p autonomy-sim --features ditto-real -- --ditto real
 
 ### Transport behavior
 
-`RealDittoTransport::new` creates a persistent Ditto peer for every supplied peer entity, subscribes it to the C2, telemetry, and mission-coordination collections, and disables ambient discovery transports. Each peer listens on an explicit TCP port.
+`RealDittoTransport::new` creates a persistent Ditto peer for every supplied peer entity, subscribes it to the configured collection list, and disables ambient discovery transports. An empty `RealDittoConfig.collections` list retains the C2, telemetry, and wildfire defaults; the C-UAS simulator supplies only its three defensive coordination collections. Each peer listens on an explicit TCP port.
 
 The simulator converts each current `NetworkBackend::link_states` frame into `apply_links` input. Every entity pair with at least one `Up` carrier receives exactly one explicit Ditto connection. Removing its final up carrier removes that connection, so an emulated partition prevents document exchange; restoring a carrier allows Ditto to converge its actual CRDT collection. `write_document`, `read_document`, and `observe` expose real DQL data and replica/convergence state, which populate the existing v1 Ditto peer/document/event fields.
 
