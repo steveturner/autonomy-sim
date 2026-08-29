@@ -1,4 +1,4 @@
-.PHONY: setup live demo wildfire wildfire-live cuas demo-cuas frontend check demo-sigforge build-dittoffi test-ditto-real demo-ditto-real demo-ditto-peers clean-output
+.PHONY: setup live demo wildfire wildfire-live cuas demo-cuas test-cuas-real frontend check demo-sigforge build-dittoffi test-ditto-real demo-ditto-real demo-ditto-peers clean-output
 
 HOST ?= 127.0.0.1
 SCENARIO ?= isr-relay-demo
@@ -33,6 +33,10 @@ cuas:
 demo-cuas: build-dittoffi
 	@test -n "$${DITTO_LICENSE:-}" || { echo "set DITTO_LICENSE to an offline Ditto license"; exit 2; }
 	env -u NO_COLOR DITTO_SOURCE_DIR="$(DITTO_SOURCE_DIR)" DITTOFFI_LIB_DIR="$(DITTO_BUILD_TARGET_DIR)/release/deps" LD_LIBRARY_PATH="$(DITTO_BUILD_TARGET_DIR)/release/deps$${LD_LIBRARY_PATH:+:$${LD_LIBRARY_PATH}}" RUST_LOG="$${RUST_LOG:-info}" cargo run -p autonomy-sim --features ditto-real -- --scenario cuas-stadium --ditto real --network-backend analytic --bind $(HOST):9000
+
+test-cuas-real: build-dittoffi
+	@test -n "$${DITTO_LICENSE:-}" || { echo "set DITTO_LICENSE to an offline Ditto license"; exit 2; }
+	env -u NO_COLOR DITTO_SOURCE_DIR="$(DITTO_SOURCE_DIR)" DITTOFFI_LIB_DIR="$(DITTO_BUILD_TARGET_DIR)/release/deps" LD_LIBRARY_PATH="$(DITTO_BUILD_TARGET_DIR)/release/deps$${LD_LIBRARY_PATH:+:$${LD_LIBRARY_PATH}}" RUST_LOG="$${RUST_LOG:-warn}" cargo test -p autonomy-sim --features ditto-real --test real_cuas -- --nocapture
 
 frontend:
 	VITE_BIND_HOST=$(HOST) npm --prefix frontend run dev

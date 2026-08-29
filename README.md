@@ -42,6 +42,12 @@ make demo-cuas
 
 That target builds `dittoffi`, selects `--ditto real`, creates Ditto peers only for the friendly radar/EW/interceptor/abstract-final-layer defenders, and transmits `cuas.tracks`, `cuas.ew_assignments`, and `cuas.engagements`. Hostile tracks have no radios and no Ditto peer.
 
+The license-gated automated convergence case uses the same real transport and asserts that all three collections reach all eight defenders:
+
+```bash
+DITTO_SOURCE_DIR=/home/sturner/projects/ditto make test-cuas-real
+```
+
 Use `make wildfire-live` to start both the wildfire simulator and frontend. Both targets accept `HOST=0.0.0.0` for the existing trusted-LAN profile.
 
 This runs the simulator/WebSocket service and Vite together. To run them in separate terminals instead, start the simulator in terminal 1:
