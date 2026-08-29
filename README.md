@@ -36,6 +36,27 @@ make frontend
 
 Open [http://127.0.0.1:5173](http://127.0.0.1:5173). The default view is token-free 2D top-down. Select **3D PHOTOREAL** for the 3D globe. To add Google Photorealistic 3D Tiles, copy `frontend/.env.example` to `frontend/.env`, set `VITE_GOOGLE_MAPS_API_KEY`, and restart Vite; without a key, 3D falls back to the Cesium globe.
 
+## Trusted-LAN remote access
+
+Loopback remains the default. To opt in to remote access, bind both services to every interface:
+
+```bash
+make live HOST=0.0.0.0
+```
+
+From another machine, open `http://<sim-host-LAN-IP>:5173`. Allow inbound TCP ports 5173 and 9000 in the host firewall if necessary. The frontend derives its default API/WebSocket host from `window.location.hostname`, so a remote browser connects back to `<sim-host-LAN-IP>:9000` rather than its own loopback address.
+
+For separate terminals, use:
+
+```bash
+make demo HOST=0.0.0.0
+make frontend HOST=0.0.0.0
+```
+
+For a split-host or nonstandard API deployment, set `VITE_API_HOST=hostname:port`, `VITE_API_URL=http://hostname:port`, or the exact `VITE_WS_URL`. See `frontend/.env.example`.
+
+> **SECURITY:** The Phase 1 HTTP API and WebSocket have no authentication, authorization, or TLS. Binding to `0.0.0.0` exposes simulation state to anyone who can reach those ports. Use remote mode only on a trusted LAN or isolated demo network. Do not expose it directly to the public internet.
+
 The backend writes one standalone Cursor-on-Target event per line to `output/isr-demo.cot`. Follow it with:
 
 ```bash
@@ -105,13 +126,13 @@ waypoints = [
 
 Kinds are `drone`, `person`, `ground_vehicle`, `ground_station`, and `sensor`; domains are `ground`, `air`, `maritime`, and `space`. Radios use `mesh`, `cellular`, `satcom`, or `ble`. Playbooks are `hold`, `area_search`, `persistent_surveillance`, and `comms_relay`. Invalid scenarios fail before the server binds.
 
-Run another scenario or override the API address:
+Run another scenario or override the API address directly:
 
 ```bash
 cargo run -- --scenario scenarios/thin-slice.toml --bind 127.0.0.1:9100
 ```
 
-When the backend port changes, set `VITE_WS_URL=ws://127.0.0.1:9100/api/v1/stream` for Vite.
+When the backend port changes, set `VITE_API_HOST=127.0.0.1:9100` for Vite. `VITE_API_URL=http://127.0.0.1:9100` and the lower-level `VITE_WS_URL=ws://127.0.0.1:9100/api/v1/stream` are also supported.
 
 ## CoT/TAK output
 

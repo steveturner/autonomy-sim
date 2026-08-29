@@ -311,9 +311,7 @@ function handleMessage(value: HelloEnvelope | StateEnvelope): void {
 }
 
 function connect(): void {
-  const configured = import.meta.env.VITE_WS_URL as string | undefined;
-  const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-  const url = configured || `${protocol}://${location.hostname}:9000/api/v1/stream`;
+  const url = streamUrl();
   const indicator = byId('connection');
   socket = new WebSocket(url);
   socket.onopen = () => {
@@ -330,6 +328,28 @@ function connect(): void {
     window.clearTimeout(reconnectTimer);
     reconnectTimer = window.setTimeout(connect, 1500);
   };
+}
+
+function apiBaseUrl(): URL {
+  const configuredUrl = import.meta.env.VITE_API_URL as string | undefined;
+  if (configuredUrl) return new URL(configuredUrl, location.href);
+
+  const protocol = location.protocol === 'https:' ? 'https:' : 'http:';
+  const configuredHost = import.meta.env.VITE_API_HOST as string | undefined;
+  const authority = configuredHost || `${location.hostname}:9000`;
+  return new URL(`${protocol}//${authority}`);
+}
+
+function streamUrl(): string {
+  const configuredWebSocket = import.meta.env.VITE_WS_URL as string | undefined;
+  if (configuredWebSocket) return configuredWebSocket;
+
+  const url = apiBaseUrl();
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  url.pathname = '/api/v1/stream';
+  url.search = '';
+  url.hash = '';
+  return url.toString();
 }
 
 async function show3d(): Promise<void> {
@@ -365,4 +385,12 @@ byId<HTMLButtonElement>('mode3d').addEventListener('click', () => {
 
 connect();
 viewer.scene.postRender.addEventListener(syncLinkOverlay);
-(window as any).autonomySim = { viewer, entityVisuals, linkVisuals, svgLinkVisuals, reconnect: connect };
+(window as any).autonomySim = {
+  viewer,
+  entityVisuals,
+  linkVisuals,
+  svgLinkVisuals,
+  apiUrl: apiBaseUrl().toString(),
+  streamUrl: streamUrl(),
+  reconnect: connect,
+};
