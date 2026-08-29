@@ -51,7 +51,11 @@ button { font: inherit; }
 .brand-mark { display: grid; place-items: center; width: 34px; height: 34px; color: #071015; background: #67e8f9; font-weight: 700; letter-spacing: -.08em; }
 .mission { text-align: center; }
 .eyebrow, .hud-title, .metric span { display: block; color: #76909e; font: 500 10px/1.2 'IBM Plex Mono', monospace; letter-spacing: .16em; }
-.mission strong { font: 600 13px/1.3 'IBM Plex Mono', monospace; letter-spacing: .09em; }
+.scenario-control { display: flex; align-items: center; gap: 9px; margin-top: 3px; }
+.mission strong { max-width: 210px; overflow: hidden; font: 600 12px/1.3 'IBM Plex Mono', monospace; letter-spacing: .07em; text-overflow: ellipsis; white-space: nowrap; }
+.scenario-control select { max-width: 190px; min-width: 120px; padding: 5px 25px 5px 8px; color: #d8f6ff; background: #07141c; border: 1px solid rgba(103, 232, 249, .28); border-radius: 0; cursor: pointer; font: 600 10px 'IBM Plex Mono', monospace; letter-spacing: .04em; text-transform: uppercase; }
+.scenario-control select:focus-visible { outline: 2px solid #67e8f9; outline-offset: 2px; }
+.scenario-control select:disabled { color: #6b8794; cursor: wait; }
 .connection { justify-self: end; display: flex; align-items: center; gap: 8px; font: 600 11px 'IBM Plex Mono', monospace; letter-spacing: .1em; }
 .connection span { width: 7px; height: 7px; border-radius: 50%; background: #fbbf24; box-shadow: 0 0 10px currentColor; }
 .connection.online { color: #4ade80; }
@@ -119,8 +123,9 @@ button { font: inherit; }
 .cesium-viewer-toolbar, .cesium-viewer-animationContainer, .cesium-viewer-timelineContainer, .cesium-viewer-bottom { display: none !important; }
 
 @media (max-width: 760px) {
-  .topbar { grid-template-columns: 1fr auto; padding: 0 12px; }
-  .mission { display: none; }
+  .topbar { grid-template-columns: auto 1fr auto; gap: 10px; padding: 0 12px; }
+  .brand > span:last-child, .mission strong { display: none; }
+  .scenario-control select { width: min(36vw, 170px); min-width: 0; }
   .hud { top: 76px; }
   .hud-left { left: 12px; width: 180px; }
   .hud-right { display: none; }

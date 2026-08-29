@@ -85,3 +85,10 @@ export interface HelloEnvelope {
   schema: 'autonomy-sim/v1'; message_type: 'hello'; sequence: 0; sim_time_s: 0;
   payload: { scenario: string; tick_hz: number; server: string };
 }
+
+export interface ScenarioSummary {
+  id: string;
+  name: string;
+  description?: string;
+  stream_url?: string;
+}

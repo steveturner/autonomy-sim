@@ -13,7 +13,15 @@
       <svg id="linkOverlay" aria-hidden="true"></svg>
       <header class="topbar">
         <div class="brand"><span class="brand-mark">A/S</span><span>autonomy-sim</span></div>
-        <div class="mission"><span class="eyebrow">MISSION</span><strong id="scenarioName">CONNECTING</strong></div>
+        <div class="mission">
+          <label class="eyebrow" for="scenarioSelect">SCENARIO</label>
+          <div class="scenario-control">
+            <strong id="scenarioName">CONNECTING</strong>
+            <select id="scenarioSelect" aria-label="Select simulation scenario" disabled>
+              <option>DISCOVERING…</option>
+            </select>
+          </div>
+        </div>
         <div id="connection" class="connection pending"><span></span>WAITING</div>
       </header>
       <aside class="hud hud-left">

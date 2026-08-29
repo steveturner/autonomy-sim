@@ -7,6 +7,7 @@ import type {
   LinkEvent,
   LinkState,
   LinkType,
+  ScenarioSummary,
   StateEnvelope,
   TrafficState,
 } from './types';
@@ -110,6 +111,10 @@ let hasFramed = false;
 let googleTiles: any = null;
 let reconnectTimer = 0;
 let socket: WebSocket | null = null;
+let connectionGeneration = 0;
+let lastSequence = -1;
+let selectedScenario: ScenarioSummary | null = null;
+let scenarios: ScenarioSummary[] = [];
 
 const linkColors: Record<LinkType, any> = {
   mesh: Cesium.Color.fromCssColorString('#22d3ee'),
@@ -648,12 +653,41 @@ function frameScenario(entities: EntityState[]): void {
   });
 }
 
+function clearDynamicVisuals(): void {
+  for (const visual of entityVisuals.values()) {
+    viewer.entities.remove(visual.marker);
+    viewer.entities.remove(visual.trail);
+  }
+  for (const visual of effectVisuals.values()) viewer.entities.remove(visual.entity);
+  for (const visual of linkVisuals.values()) viewer.entities.remove(visual);
+  for (const visual of svgLinkVisuals.values()) visual.line.remove();
+  entityVisuals.clear();
+  effectVisuals.clear();
+  linkVisuals.clear();
+  svgLinkVisuals.clear();
+  entityPositions.clear();
+  byId<HTMLOListElement>('eventLog').innerHTML = '<li class="muted">No transitions yet</li>';
+  hasFramed = false;
+  lastSequence = -1;
+}
+
+function setScenarioHeading(scenario: string): void {
+  byId('scenarioName').textContent = scenario.toUpperCase();
+  const matching = scenarios.find((item) => item.id === scenario || item.name === scenario);
+  if (matching) {
+    selectedScenario = matching;
+    byId<HTMLSelectElement>('scenarioSelect').value = matching.id;
+  }
+}
+
 function handleMessage(value: HelloEnvelope | StateEnvelope): void {
   if (value.schema !== 'autonomy-sim/v1') return;
   if (value.message_type === 'hello') {
-    byId('scenarioName').textContent = value.payload.scenario.toUpperCase();
+    setScenarioHeading(value.payload.scenario);
     return;
   }
+  if (value.sequence <= lastSequence) return;
+  lastSequence = value.sequence;
   updateEntities(value.payload.entities);
   updateEffects(value.payload.entities, value.payload.effects);
   updateLinks(value.payload.links, value.payload.traffic);
@@ -665,18 +699,30 @@ function handleMessage(value: HelloEnvelope | StateEnvelope): void {
 }
 
 function connect(): void {
-  const url = streamUrl();
+  const generation = ++connectionGeneration;
+  window.clearTimeout(reconnectTimer);
+  if (socket) {
+    socket.onclose = null;
+    socket.close();
+  }
+  const url = streamUrl(selectedScenario);
   const indicator = byId('connection');
+  indicator.className = 'connection pending';
+  indicator.innerHTML = '<span></span>CONNECTING';
+  lastSequence = -1;
   socket = new WebSocket(url);
   socket.onopen = () => {
+    if (generation !== connectionGeneration) return;
     indicator.className = 'connection online';
     indicator.innerHTML = '<span></span>LIVE';
   };
   socket.onmessage = (event) => {
+    if (generation !== connectionGeneration) return;
     try { handleMessage(JSON.parse(event.data)); }
     catch (error) { console.error('Invalid state message', error); }
   };
   socket.onclose = () => {
+    if (generation !== connectionGeneration) return;
     indicator.className = 'connection offline';
     indicator.innerHTML = '<span></span>RECONNECTING';
     window.clearTimeout(reconnectTimer);
@@ -694,16 +740,81 @@ function apiBaseUrl(): URL {
   return new URL(`${protocol}//${authority}`);
 }
 
-function streamUrl(): string {
+function streamUrl(scenario: ScenarioSummary | null = selectedScenario): string {
   const configuredWebSocket = import.meta.env.VITE_WS_URL as string | undefined;
-  if (configuredWebSocket) return configuredWebSocket;
-
-  const url = apiBaseUrl();
+  const endpoint = scenario?.stream_url || configuredWebSocket;
+  const url = endpoint ? new URL(endpoint, apiBaseUrl()) : apiBaseUrl();
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-  url.pathname = '/api/v1/stream';
+  if (!endpoint) {
+    url.pathname = '/api/v1/stream';
+    url.search = '';
+  }
+  if (scenario?.id) url.searchParams.set('scenario', scenario.id);
+  url.hash = '';
+  return url.toString();
+}
+
+function scenariosUrl(): string {
+  const url = apiBaseUrl();
+  url.pathname = '/api/v1/scenarios';
   url.search = '';
   url.hash = '';
   return url.toString();
+}
+
+function normalizeScenario(value: unknown): ScenarioSummary | null {
+  if (typeof value === 'string' && value.trim()) {
+    return { id: value, name: value };
+  }
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, unknown>;
+  const id = String(record.id || record.slug || record.scenario || record.name || '').trim();
+  if (!id) return null;
+  return {
+    id,
+    name: String(record.display_name || record.title || record.name || id),
+    description: typeof record.description === 'string' ? record.description : undefined,
+    stream_url: typeof record.stream_url === 'string'
+      ? record.stream_url
+      : typeof record.ws_url === 'string' ? record.ws_url : undefined,
+  };
+}
+
+async function loadScenarios(): Promise<void> {
+  const select = byId<HTMLSelectElement>('scenarioSelect');
+  try {
+    const response = await fetch(scenariosUrl(), { signal: AbortSignal.timeout(5000) });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const body: unknown = await response.json();
+    const raw = Array.isArray(body)
+      ? body
+      : body && typeof body === 'object' && Array.isArray((body as Record<string, unknown>).scenarios)
+        ? (body as { scenarios: unknown[] }).scenarios
+        : [];
+    scenarios = raw.map(normalizeScenario).filter((item): item is ScenarioSummary => Boolean(item));
+    if (!scenarios.length) throw new Error('server returned no scenarios');
+
+    select.replaceChildren(...scenarios.map((scenario) => {
+      const option = document.createElement('option');
+      option.value = scenario.id;
+      option.textContent = scenario.name;
+      if (scenario.description) option.title = scenario.description;
+      return option;
+    }));
+    const requested = new URL(location.href).searchParams.get('scenario');
+    selectedScenario = scenarios.find((scenario) => scenario.id === requested) || scenarios[0];
+    select.value = selectedScenario.id;
+    select.disabled = false;
+    setScenarioHeading(selectedScenario.name);
+  } catch (error) {
+    console.warn('Scenario discovery unavailable; connecting to the server default', error);
+    scenarios = [];
+    selectedScenario = null;
+    const option = document.createElement('option');
+    option.textContent = 'SERVER DEFAULT';
+    select.replaceChildren(option);
+    select.disabled = true;
+  }
 }
 
 async function show3d(): Promise<void> {
@@ -736,15 +847,26 @@ byId<HTMLButtonElement>('mode3d').addEventListener('click', () => {
   if (googleTiles) googleTiles.show = true;
   void show3d();
 });
+byId<HTMLSelectElement>('scenarioSelect').addEventListener('change', (event) => {
+  const scenarioId = (event.currentTarget as HTMLSelectElement).value;
+  const nextScenario = scenarios.find((scenario) => scenario.id === scenarioId);
+  if (!nextScenario || nextScenario.id === selectedScenario?.id) return;
+  selectedScenario = nextScenario;
+  setScenarioHeading(nextScenario.name);
+  clearDynamicVisuals();
+  connect();
+});
 
-connect();
+void loadScenarios().finally(connect);
 viewer.scene.postRender.addEventListener(syncLinkOverlay);
 (window as any).autonomySim = {
   viewer,
   entityVisuals,
+  effectVisuals,
   linkVisuals,
   svgLinkVisuals,
   apiUrl: apiBaseUrl().toString(),
-  streamUrl: streamUrl(),
+  get streamUrl() { return streamUrl(); },
+  get scenarios() { return scenarios; },
   reconnect: connect,
 };
