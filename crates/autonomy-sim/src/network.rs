@@ -17,6 +17,8 @@ pub struct LinkState {
     pub id: String,
     pub source: String,
     pub target: String,
+    pub source_peer_id: String,
+    pub target_peer_id: String,
     pub link_type: LinkType,
     pub state: LinkStatus,
     pub quality: f64,
@@ -43,6 +45,8 @@ pub struct TrafficState {
     pub rx_bps: u64,
     pub messages_per_s: f64,
     pub queue_depth: u32,
+    pub document_ops_per_s: f64,
+    pub pending_documents: u32,
 }
 
 #[derive(Debug, Error)]
@@ -178,6 +182,8 @@ impl AnalyticNetworkBackend {
             id: format!("link/{}/{a}/{b}", source_radio.link_type),
             source: a.to_owned(),
             target: b.to_owned(),
+            source_peer_id: crate::ditto::peer_id(a),
+            target_peer_id: crate::ditto::peer_id(b),
             link_type: source_radio.link_type,
             state: if up { LinkStatus::Up } else { LinkStatus::Down },
             quality,
@@ -301,21 +307,33 @@ pub fn derive_link_events(
         .collect()
 }
 
-pub fn synthetic_traffic(links: &[LinkState], sequence: u64) -> Vec<TrafficState> {
+pub fn ditto_traffic(
+    links: &[LinkState],
+    sequence: u64,
+    tick_hz: f64,
+    document_ops: &BTreeMap<String, u32>,
+    pending_documents: &BTreeMap<String, u32>,
+) -> Vec<TrafficState> {
     links
         .iter()
         .filter(|link| link.state == LinkStatus::Up)
         .map(|link| {
             let phase = (stable_hash(&link.id) % 360) as f64 + sequence as f64 * 7.0;
-            let utilization = 0.05 + 0.045 * (phase.to_radians().sin() + 1.0);
-            let tx_bps = (link.capacity_bps as f64 * utilization).round() as u64;
+            let keepalive_utilization = 0.01 + 0.01 * (phase.to_radians().sin() + 1.0);
+            let operations = document_ops.get(&link.id).copied().unwrap_or(0);
+            let document_bps = f64::from(operations) * 2_048.0 * 8.0 * tick_hz;
+            let tx_bps = (link.capacity_bps as f64 * keepalive_utilization + document_bps)
+                .min(link.capacity_bps as f64)
+                .round() as u64;
             let rx_bps = (tx_bps as f64 * (1.0 - link.packet_loss)).round() as u64;
             TrafficState {
                 link_id: link.id.clone(),
                 tx_bps,
                 rx_bps,
-                messages_per_s: tx_bps as f64 / 8.0 / 1024.0,
+                messages_per_s: f64::from(operations) * tick_hz + 1.0,
                 queue_depth: ((1.0 - link.quality) * 12.0).round() as u32,
+                document_ops_per_s: f64::from(operations) * tick_hz,
+                pending_documents: pending_documents.get(&link.id).copied().unwrap_or(0),
             }
         })
         .collect()
@@ -386,6 +404,8 @@ mod tests {
             id: "link/mesh/a/b".into(),
             source: "a".into(),
             target: "b".into(),
+            source_peer_id: crate::ditto::peer_id("a"),
+            target_peer_id: crate::ditto::peer_id("b"),
             link_type: LinkType::Mesh,
             state: LinkStatus::Up,
             quality: 1.0,

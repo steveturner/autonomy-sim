@@ -13,10 +13,26 @@ fn demo_exercises_every_transport_and_link_flaps() {
     let mut up_events = 0;
     let mut links_that_dropped = BTreeSet::new();
     let mut restored_links = BTreeSet::new();
+    let mut collections = BTreeSet::new();
+    let mut replication_events = 0;
+    let mut observed_pending_replication = false;
 
     for _ in 0..1_100 {
         let frame = simulation.tick().unwrap();
         transport_types.extend(frame.payload.links.iter().map(|link| link.link_type));
+        collections.extend(
+            frame
+                .payload
+                .ditto_documents
+                .iter()
+                .map(|document| document.collection.clone()),
+        );
+        replication_events += frame.payload.ditto_replication_events.len();
+        observed_pending_replication |= frame
+            .payload
+            .ditto_peers
+            .iter()
+            .any(|peer| peer.pending_documents > 0);
         for event in frame.payload.link_events {
             match event.state {
                 autonomy_sim::network::LinkStatus::Up => {
@@ -34,6 +50,23 @@ fn demo_exercises_every_transport_and_link_flaps() {
     }
 
     assert_eq!(transport_types.len(), 4);
+    assert_eq!(
+        collections,
+        BTreeSet::from([
+            "c2.pli".to_owned(),
+            "c2.tasking".to_owned(),
+            "c2.tracks".to_owned(),
+            "telemetry.platform".to_owned(),
+        ])
+    );
+    assert!(
+        replication_events > 0,
+        "expected Ditto document propagation"
+    );
+    assert!(
+        observed_pending_replication,
+        "expected DDIL partitions to leave documents pending"
+    );
     assert!(
         down_events >= 2,
         "expected multiple link drops, got {down_events}"

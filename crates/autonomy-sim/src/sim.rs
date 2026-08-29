@@ -6,10 +6,11 @@ use chrono::Utc;
 use crate::{
     behavior::BehaviorRuntime,
     cot::{CotSink, render_pli, sink_from_config},
-    model::{Entity, Kinematics, MissionState, MissionStatus, Position},
+    ditto::{DittoFrame, DittoModel, PLI_COLLECTION, TRACKS_COLLECTION},
+    model::{Entity, EntityKind, Kinematics, MissionState, MissionStatus, Position},
     network::{
         AnalyticNetworkBackend, LinkState, NetworkBackend, SigForgeBackend, derive_link_events,
-        synthetic_traffic,
+        ditto_traffic,
     },
     scenario::{MissionConfig, ScenarioConfig},
     wire::{SCHEMA, StateEnvelope, StatePayload, entity_czml, link_czml},
@@ -29,6 +30,8 @@ pub struct Simulation {
     agents: Vec<Agent>,
     network: Box<dyn NetworkBackend>,
     previous_links: Vec<LinkState>,
+    ditto: DittoModel,
+    gateway_entity_id: String,
     cot_sink: Box<dyn CotSink>,
     cot_interval_ticks: u64,
     cot_stale_after_s: i64,
@@ -67,8 +70,20 @@ impl Simulation {
             _ => Box::new(AnalyticNetworkBackend::default()),
         };
         let entities: Vec<_> = agents.iter().map(|agent| agent.entity.clone()).collect();
+        let gateway_entity_id = entities
+            .iter()
+            .find(|entity| entity.kind == EntityKind::GroundStation)
+            .or_else(|| entities.first())
+            .map(|entity| entity.id.clone())
+            .ok_or_else(|| anyhow::anyhow!("scenario requires at least one node"))?;
         network.register_nodes(&entities)?;
         tracing::info!(backend = network.name(), "network backend initialized");
+        let ditto = DittoModel::new(
+            &entities,
+            &gateway_entity_id,
+            &config.scenario.name,
+            config.simulation.tick_hz,
+        );
 
         Ok(Self {
             scenario_name: config.scenario.name.clone(),
@@ -78,6 +93,8 @@ impl Simulation {
             agents,
             network,
             previous_links: Vec::new(),
+            ditto,
+            gateway_entity_id,
             cot_sink: sink_from_config(&config.cot)?,
             cot_interval_ticks: (config.cot.interval_s * config.simulation.tick_hz)
                 .round()
@@ -120,7 +137,7 @@ impl Simulation {
         self.evaluate_frame(true)
     }
 
-    fn evaluate_frame(&mut self, emit_cot: bool) -> Result<StateEnvelope> {
+    fn evaluate_frame(&mut self, advance: bool) -> Result<StateEnvelope> {
         let entities: Vec<_> = self
             .agents
             .iter()
@@ -133,12 +150,37 @@ impl Simulation {
             .map(|link| (link.id.clone(), link.state))
             .collect();
         let link_events = derive_link_events(&previous, &links, self.sim_time_s);
-        let traffic = synthetic_traffic(&links, self.sequence);
+        let ditto = if advance {
+            self.ditto
+                .tick(self.sequence, self.sim_time_s, &entities, &links)
+        } else {
+            self.ditto.snapshot(&links)
+        };
+        let traffic = ditto_traffic(
+            &links,
+            self.sequence,
+            self.tick_hz,
+            &ditto.document_ops_by_link,
+            &ditto.pending_documents_by_link,
+        );
         self.previous_links = links.clone();
 
-        if emit_cot && self.sequence.is_multiple_of(self.cot_interval_ticks) {
+        if advance && self.sequence.is_multiple_of(self.cot_interval_ticks) {
             let now = Utc::now();
             for entity in &entities {
+                let has_pli = self.ditto.peer_has_latest(
+                    &self.gateway_entity_id,
+                    PLI_COLLECTION,
+                    &format!("pli/{}", entity.id),
+                );
+                let has_track = self.ditto.peer_has_latest(
+                    &self.gateway_entity_id,
+                    TRACKS_COLLECTION,
+                    &format!("track/{}", entity.id),
+                );
+                if !has_pli || !has_track {
+                    continue;
+                }
                 let xml = render_pli(entity, now, self.cot_stale_after_s);
                 if let Err(error) = self.cot_sink.emit(&xml) {
                     tracing::warn!(%error, entity = %entity.id, "CoT sink write failed");
@@ -146,7 +188,7 @@ impl Simulation {
             }
         }
 
-        Ok(self.frame(entities, links, link_events, traffic))
+        Ok(self.frame(entities, links, link_events, traffic, ditto))
     }
 
     fn frame(
@@ -155,6 +197,7 @@ impl Simulation {
         links: Vec<LinkState>,
         link_events: Vec<crate::network::LinkEvent>,
         traffic: Vec<crate::network::TrafficState>,
+        ditto: DittoFrame,
     ) -> StateEnvelope {
         let positions: BTreeMap<_, _> = entities
             .iter()
@@ -172,6 +215,9 @@ impl Simulation {
                 links,
                 link_events,
                 traffic,
+                ditto_peers: ditto.peers,
+                ditto_documents: ditto.documents,
+                ditto_replication_events: ditto.replication_events,
                 czml,
             },
         }
@@ -243,5 +289,10 @@ mod tests {
         assert_eq!(frame.payload.traffic.len(), 1);
         assert_eq!(frame.payload.czml.len(), 3);
         assert_eq!(frame.payload.link_events.len(), 1);
+        assert_eq!(frame.payload.ditto_peers.len(), 2);
+
+        let frame = simulation.tick().unwrap();
+        assert!(frame.payload.ditto_documents.len() >= 7);
+        assert!(!frame.payload.ditto_replication_events.is_empty());
     }
 }

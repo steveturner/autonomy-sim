@@ -1,6 +1,7 @@
 use serde::Serialize;
 
 use crate::{
+    ditto::{DittoDocumentState, DittoPeerState, DittoReplicationEvent, peer_id},
     model::{Entity, LinkType, Position},
     network::{LinkEvent, LinkState, LinkStatus, TrafficState},
 };
@@ -38,6 +39,9 @@ pub struct StatePayload {
     pub links: Vec<LinkState>,
     pub link_events: Vec<LinkEvent>,
     pub traffic: Vec<TrafficState>,
+    pub ditto_peers: Vec<DittoPeerState>,
+    pub ditto_documents: Vec<DittoDocumentState>,
+    pub ditto_replication_events: Vec<DittoReplicationEvent>,
     pub czml: Vec<serde_json::Value>,
 }
 
@@ -58,7 +62,7 @@ pub fn link_czml(
     };
     Some(serde_json::json!({
         "id": link.id,
-        "name": format!("{} {} ↔ {}", link.link_type, link.source, link.target),
+        "name": format!("Ditto over {}: {} ↔ {}", link.link_type, link.source, link.target),
         "polyline": {
             "positions": { "cartographicDegrees": [
                 source.lon_deg, source.lat_deg, source.alt_m,
@@ -70,6 +74,8 @@ pub fn link_czml(
         "properties": {
             "source": link.source,
             "target": link.target,
+            "source_peer_id": link.source_peer_id,
+            "target_peer_id": link.target_peer_id,
             "link_type": link.link_type,
             "quality": link.quality,
             "traffic_units": "bits_per_second"
@@ -106,6 +112,7 @@ pub fn entity_czml(entity: &Entity) -> serde_json::Value {
         "label": { "text": entity.name },
         "properties": {
             "entity_id": entity.id,
+            "ditto_peer_id": peer_id(&entity.id),
             "kind": entity.kind,
             "domain": entity.domain,
         }

@@ -2,6 +2,7 @@
 
 pub mod behavior;
 pub mod cot;
+pub mod ditto;
 pub mod model;
 pub mod network;
 pub mod scenario;
