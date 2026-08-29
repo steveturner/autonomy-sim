@@ -8,7 +8,7 @@ use tracing_subscriber::EnvFilter;
 #[derive(Debug, Parser)]
 #[command(about = "Defensive ISR autonomy and connectivity simulator")]
 struct Args {
-    #[arg(short, long, default_value = "scenarios/thin-slice.toml")]
+    #[arg(short, long, default_value = "scenarios/isr-demo.toml")]
     scenario: PathBuf,
 
     #[arg(long, help = "Override the scenario API bind address")]

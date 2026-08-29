@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    model::{Entity, MissionStatus, Position},
+    model::{Entity, LinkType, MissionStatus, Position},
     network::{LinkState, LinkStatus},
     scenario::MissionConfig,
 };
@@ -191,7 +191,8 @@ impl Condition {
                     let left = &context.mission.target_entities[0];
                     let right = &context.mission.target_entities[1];
                     context.previous_links.iter().any(|link| {
-                        link.state == LinkStatus::Up
+                        link.link_type == LinkType::Mesh
+                            && link.state == LinkStatus::Up
                             && ((link.source == *left && link.target == *right)
                                 || (link.source == *right && link.target == *left))
                     })

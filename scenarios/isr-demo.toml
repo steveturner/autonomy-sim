@@ -1,0 +1,193 @@
+# Phase 1 ISR / communications coordination demonstration.
+# Uses only the built-in analytic backend: no CORE, EMANE, SigForge, or TAK
+# server is required.
+
+[scenario]
+name = "isr-relay-demo"
+description = "Two ISR drones, a mobile relay, two people, and a C2 node with flapping Ditto links"
+seed = 42
+realtime = true
+
+[simulation]
+tick_hz = 5.0
+network_backend = "analytic"
+
+[api]
+bind = "127.0.0.1:9000"
+
+[cot]
+sink = "file"
+path = "output/isr-demo.cot"
+interval_s = 1.0
+stale_after_s = 10
+
+# Static C2 node acts as a multi-transport gateway.
+[[nodes]]
+id = "ground-c2"
+name = "C2 Gateway"
+kind = "ground_station"
+domain = "ground"
+position = { lat_deg = 34.0500, lon_deg = -117.2500, alt_m = 315.0 }
+
+[[nodes.radios]]
+link_type = "mesh"
+range_m = 700.0
+capacity_bps = 4000000
+base_latency_ms = 7.0
+
+[[nodes.radios]]
+link_type = "cellular"
+range_m = 2200.0
+capacity_bps = 12000000
+base_latency_ms = 38.0
+
+[[nodes.radios]]
+link_type = "satcom"
+range_m = 20000.0
+capacity_bps = 512000
+base_latency_ms = 180.0
+
+[nodes.mission]
+playbook = "hold"
+human_authorized = true
+
+# Coverage platform crosses the mesh horizon and returns, producing a clear
+# up/down/up transition while retaining satcom reach-back.
+[[nodes]]
+id = "uav-alpha"
+name = "UAV Alpha"
+kind = "drone"
+domain = "air"
+position = { lat_deg = 34.0502, lon_deg = -117.2498, alt_m = 520.0 }
+
+[[nodes.radios]]
+link_type = "mesh"
+range_m = 700.0
+capacity_bps = 4000000
+base_latency_ms = 7.0
+
+[[nodes.radios]]
+link_type = "satcom"
+range_m = 20000.0
+capacity_bps = 512000
+base_latency_ms = 180.0
+
+[nodes.mission]
+playbook = "area_search"
+speed_mps = 38.0
+human_authorized = true
+waypoints = [
+  { lat_deg = 34.0502, lon_deg = -117.2498, alt_m = 520.0 },
+  { lat_deg = 34.0635, lon_deg = -117.2490, alt_m = 520.0 },
+  { lat_deg = 34.0635, lon_deg = -117.2390, alt_m = 520.0 },
+  { lat_deg = 34.0502, lon_deg = -117.2498, alt_m = 520.0 },
+]
+
+# Persistent-surveillance platform continuously loiters around the observation
+# area. Its mesh link to the gateway rides the analytic range boundary.
+[[nodes]]
+id = "uav-bravo"
+name = "UAV Bravo"
+kind = "drone"
+domain = "air"
+position = { lat_deg = 34.0550, lon_deg = -117.2450, alt_m = 610.0 }
+
+[[nodes.radios]]
+link_type = "mesh"
+range_m = 850.0
+capacity_bps = 4000000
+base_latency_ms = 7.0
+
+[[nodes.radios]]
+link_type = "satcom"
+range_m = 20000.0
+capacity_bps = 512000
+base_latency_ms = 180.0
+
+[nodes.mission]
+playbook = "persistent_surveillance"
+speed_mps = 24.0
+center = { lat_deg = 34.0562, lon_deg = -117.2440, alt_m = 610.0 }
+radius_m = 260.0
+human_authorized = true
+
+# Relay reacts when the direct gateway-to-Alpha mesh link drops. The behavior
+# tree moves it toward the peers' midpoint to extend the mesh.
+[[nodes]]
+id = "relay-one"
+name = "Relay Rover"
+kind = "ground_vehicle"
+domain = "ground"
+position = { lat_deg = 34.0520, lon_deg = -117.2494, alt_m = 318.0 }
+
+[[nodes.radios]]
+link_type = "mesh"
+range_m = 620.0
+capacity_bps = 3000000
+base_latency_ms = 9.0
+
+[[nodes.radios]]
+link_type = "cellular"
+range_m = 2200.0
+capacity_bps = 12000000
+base_latency_ms = 38.0
+
+[nodes.mission]
+playbook = "comms_relay"
+speed_mps = 11.0
+target_entities = ["ground-c2", "uav-alpha"]
+human_authorized = true
+
+# Two people demonstrate BLE flaps and cellular continuity.
+[[nodes]]
+id = "scout-one"
+name = "Scout One"
+kind = "person"
+domain = "ground"
+position = { lat_deg = 34.0498, lon_deg = -117.2501, alt_m = 315.0 }
+
+[[nodes.radios]]
+link_type = "ble"
+range_m = 105.0
+capacity_bps = 1000000
+base_latency_ms = 4.0
+
+[[nodes.radios]]
+link_type = "cellular"
+range_m = 2200.0
+capacity_bps = 12000000
+base_latency_ms = 38.0
+
+[nodes.mission]
+playbook = "area_search"
+speed_mps = 2.6
+human_authorized = true
+waypoints = [
+  { lat_deg = 34.0498, lon_deg = -117.2501, alt_m = 315.0 },
+  { lat_deg = 34.0492, lon_deg = -117.2478, alt_m = 315.0 },
+  { lat_deg = 34.0506, lon_deg = -117.2498, alt_m = 315.0 },
+]
+
+[[nodes]]
+id = "scout-two"
+name = "Scout Two"
+kind = "person"
+domain = "ground"
+position = { lat_deg = 34.0501, lon_deg = -117.2502, alt_m = 315.0 }
+
+[[nodes.radios]]
+link_type = "ble"
+range_m = 105.0
+capacity_bps = 1000000
+base_latency_ms = 4.0
+
+[[nodes.radios]]
+link_type = "cellular"
+range_m = 2200.0
+capacity_bps = 12000000
+base_latency_ms = 38.0
+
+[nodes.mission]
+playbook = "hold"
+human_authorized = true
+

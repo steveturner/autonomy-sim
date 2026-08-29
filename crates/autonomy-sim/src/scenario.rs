@@ -45,7 +45,7 @@ impl ScenarioConfig {
         }
         let mut ids = std::collections::BTreeSet::new();
         for node in &self.nodes {
-            if !ids.insert(&node.id) {
+            if !ids.insert(node.id.clone()) {
                 bail!("duplicate node id '{}'", node.id);
             }
             if node.id.is_empty()
@@ -84,6 +84,22 @@ impl ScenarioConfig {
                     bail!("node '{}' has invalid radio parameters", node.id);
                 }
             }
+        }
+        for node in &self.nodes {
+            for target in &node.mission.target_entities {
+                if !ids.contains(target) {
+                    bail!(
+                        "node '{}' mission references unknown entity '{target}'",
+                        node.id
+                    );
+                }
+            }
+        }
+        if self.cot.interval_s <= 0.0 || !self.cot.interval_s.is_finite() {
+            bail!("cot.interval_s must be finite and greater than zero");
+        }
+        if self.cot.stale_after_s <= 0 {
+            bail!("cot.stale_after_s must be greater than zero");
         }
         Ok(())
     }

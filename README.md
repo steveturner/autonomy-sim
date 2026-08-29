@@ -1,1 +1,164 @@
 # autonomy-sim
+
+Phase 1 prototype of a defensive autonomy, mission, C2/TAK, and visualization layer for uncrewed-system simulation. It runs locally with a deterministic analytic network model; CORE, EMANE, SigForge, Ditto, Cesium ion, and a TAK server are not required.
+
+The included ISR scenario drives two drones, two people, a relay rover, and a C2 gateway. Auditable behavior trees execute area search, persistent surveillance, and communications-relay playbooks. As platforms move, simulated Ditto peer links appear and drop across mesh, cellular, satcom, and BLE transports.
+
+This project is for simulation, ISR, communications, and coordination only. It contains no lethal-engagement logic. Human authorization is enforced as a hard behavior-tree condition.
+
+## Quick start
+
+Prerequisites: Rust with Edition 2024 support, Node.js 20 or newer, and npm.
+
+Install the frontend packages once:
+
+```bash
+make setup
+```
+
+Start the simulator in terminal 1:
+
+```bash
+make demo
+```
+
+Start Cesium in terminal 2:
+
+```bash
+make frontend
+```
+
+Open [http://127.0.0.1:5173](http://127.0.0.1:5173). The default view is token-free 2D top-down. Select **3D PHOTOREAL** for the 3D globe. To add Google Photorealistic 3D Tiles, copy `frontend/.env.example` to `frontend/.env`, set `VITE_GOOGLE_MAPS_API_KEY`, and restart Vite; without a key, 3D falls back to the Cesium globe.
+
+The backend writes one standalone Cursor-on-Target event per line to `output/isr-demo.cot`. Follow it with:
+
+```bash
+tail -f output/isr-demo.cot
+```
+
+## What the demo shows
+
+- `uav-alpha` follows a coverage route across the gateway's mesh horizon, creating an observable up/down/up link transition while satcom remains available.
+- `uav-bravo` executes a persistent ISR loiter using a parallel behavior subtree.
+- `relay-one` uses a fallback subtree: it holds while the direct C2-to-Alpha mesh is up and moves toward the peers' midpoint when that link drops.
+- `scout-one` patrols beyond BLE range of `scout-two` while cellular connectivity persists.
+- Link color identifies transport; opacity indicates quality; line width indicates synthetic Ditto replication traffic. The right rail records link transitions.
+- The 2D/3D switch preserves live platform state and tracks.
+
+## API and wire contract
+
+- `GET http://127.0.0.1:9000/healthz` — process health.
+- `GET http://127.0.0.1:9000/api/v1/snapshot` — latest complete state envelope.
+- `ws://127.0.0.1:9000/api/v1/stream` — `hello`, immediate current `state`, then one complete `state` per simulation tick.
+
+The stable `autonomy-sim/v1` message schema, enum values, units, ordering, and CZML projection are defined in [ARCHITECTURE.md](ARCHITECTURE.md). State frames make entities, current link state, link transitions, traffic aggregates, and CZML explicit.
+
+Inspect a snapshot:
+
+```bash
+curl --silent http://127.0.0.1:9000/api/v1/snapshot | jq
+```
+
+## Scenario conventions
+
+Scenarios are TOML and follow SigForge's top-level conventions:
+
+```toml
+[scenario]
+name = "example"
+seed = 42
+realtime = true
+
+[simulation]
+tick_hz = 5.0
+network_backend = "analytic"
+
+[[nodes]]
+id = "uav-one"
+name = "UAV One"
+kind = "drone"
+domain = "air"
+position = { lat_deg = 34.0, lon_deg = -117.0, alt_m = 200.0 }
+
+[[nodes.radios]]
+link_type = "mesh"
+range_m = 1000.0
+capacity_bps = 4000000
+base_latency_ms = 8.0
+
+[nodes.mission]
+playbook = "area_search"
+speed_mps = 20.0
+human_authorized = true
+waypoints = [
+  { lat_deg = 34.0, lon_deg = -117.0, alt_m = 200.0 },
+  { lat_deg = 34.01, lon_deg = -117.0, alt_m = 200.0 },
+]
+```
+
+Kinds are `drone`, `person`, `ground_vehicle`, `ground_station`, and `sensor`; domains are `ground`, `air`, `maritime`, and `space`. Radios use `mesh`, `cellular`, `satcom`, or `ble`. Playbooks are `hold`, `area_search`, `persistent_surveillance`, and `comms_relay`. Invalid scenarios fail before the server binds.
+
+Run another scenario or override the API address:
+
+```bash
+cargo run -- --scenario scenarios/thin-slice.toml --bind 127.0.0.1:9100
+```
+
+When the backend port changes, set `VITE_WS_URL=ws://127.0.0.1:9100/api/v1/stream` for Vite.
+
+## CoT/TAK output
+
+The `[cot]` section accepts four sink modes:
+
+```toml
+[cot]
+sink = "file" # disabled | file | udp | tcp
+path = "output/events.cot"
+endpoint = "239.2.3.1:6969" # required for udp/tcp, unused for file
+interval_s = 1.0
+stale_after_s = 10
+```
+
+Phase 1 emits friendly platform PLI/track events with contact and course/speed detail. UDP and TCP send newline-delimited standalone events. TAK tasking ingest is intentionally deferred until authentication, authorization, replay protection, validation, and explicit human approval are designed.
+
+## Development and verification
+
+```bash
+make check
+```
+
+This runs Rust formatting, Clippy with warnings denied, all Rust unit/integration tests, and the frontend production build. The ISR integration test advances 220 simulation seconds without waiting on wall time and asserts that all four transports occur and multiple link drops/restorations are emitted.
+
+Useful individual commands:
+
+```bash
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+npm --prefix frontend run build
+```
+
+## Phase 1 status
+
+Implemented:
+
+- WGS84 entity/kinematics model across ground, air, maritime, and space domains.
+- Fixed-step scheduler and validated TOML scenarios.
+- Auditable sequence, fallback, and parallel behavior trees with ISR/coverage/relay playbooks.
+- `NetworkBackend` and `PropagationModel` traits, outdoor analytic networking, four link types, transition events, quality/loss/latency/capacity, and deterministic synthetic Ditto traffic.
+- Axum REST snapshot and Tokio WebSocket state streamer using the documented v1 contract and CZML-compatible packets.
+- CoT PLI/track XML with file, UDP, and TCP sinks.
+- CesiumJS 2D and 3D modes, platform tracks, live link reconciliation, transport styling, traffic indication, and optional Google Photorealistic 3D Tiles.
+
+Stubbed or deferred:
+
+- The `SigForgeBackend` is an explicit trait implementation that fails closed with integration guidance; real SigForge API/WebSocket/PHY integration is Phase 2.
+- CoT/TAK ingest and production TAK Server certificate handling are Phase 2.
+- Analytic traffic is a deterministic aggregate, not Ditto packet capture.
+- Terrain/LOS, indoor body blocking, urban propagation, and ns-3 are later `PropagationModel` implementations.
+- MAP-Elites is a Phase 4 offline playbook-library mechanism, not part of runtime mission execution.
+
+See [PLAN.md](PLAN.md) for the phased roadmap.
+
+## License
+
+Apache-2.0.
