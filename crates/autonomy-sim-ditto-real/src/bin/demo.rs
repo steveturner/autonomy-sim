@@ -74,6 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             storage_root: storage_root.clone(),
             port_base,
             listen_ip: "127.0.0.1".into(),
+            collections: Vec::new(),
         },
     )?;
 

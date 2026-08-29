@@ -45,6 +45,13 @@ pub struct RealDittoLink {
     pub up: bool,
 }
 
+pub fn default_collections() -> Vec<String> {
+    AUTONOMY_COLLECTIONS
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
+}
+
 #[derive(Clone, Debug)]
 pub struct RealDittoConfig {
     /// All peers must use the same database ID to join the same Ditto mesh.
@@ -57,6 +64,30 @@ pub struct RealDittoConfig {
     pub port_base: u16,
     /// Interface used by explicit Ditto TCP listeners and connections.
     pub listen_ip: String,
+    /// Collections subscribed, readable, observable, and writable by every
+    /// peer. An empty list selects [`AUTONOMY_COLLECTIONS`] for compatibility.
+    pub collections: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_collection_list_preserves_the_original_contract() {
+        assert_eq!(
+            default_collections(),
+            vec![
+                "c2.tasking",
+                "c2.pli",
+                "c2.tracks",
+                "telemetry.platform",
+                "mission.fire_cells",
+                "mission.base_queue",
+                "mission.drop_assignments",
+            ]
+        );
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

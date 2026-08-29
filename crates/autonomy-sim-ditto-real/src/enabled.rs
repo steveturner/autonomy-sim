@@ -9,8 +9,8 @@ use serde_json::{Value, json};
 use thiserror::Error;
 
 use crate::{
-    AUTONOMY_COLLECTIONS, RealDittoConfig, RealDittoDocumentObservation, RealDittoEntity,
-    RealDittoLink, RealDittoObservation, RealDittoPeerObservation,
+    RealDittoConfig, RealDittoDocumentObservation, RealDittoEntity, RealDittoLink,
+    RealDittoObservation, RealDittoPeerObservation, default_collections,
 };
 
 #[derive(Debug, Error)]
@@ -231,7 +231,7 @@ pub struct RealDittoTransport {
 impl RealDittoTransport {
     pub fn new(
         entities: &[RealDittoEntity],
-        config: RealDittoConfig,
+        mut config: RealDittoConfig,
     ) -> Result<Self, RealDittoError> {
         if entities.is_empty() {
             return Err(RealDittoError::InvalidConfig(
@@ -247,6 +247,18 @@ impl RealDittoTransport {
             return Err(RealDittoError::InvalidConfig(
                 "license must not be empty".into(),
             ));
+        }
+        if config.collections.is_empty() {
+            config.collections = default_collections();
+        }
+        let mut unique_collections = BTreeSet::new();
+        for collection in &config.collections {
+            validate_collection_name(collection)?;
+            if !unique_collections.insert(collection.clone()) {
+                return Err(RealDittoError::InvalidConfig(format!(
+                    "duplicate Ditto collection '{collection}'"
+                )));
+            }
         }
         let last_port = usize::from(config.port_base) + entities.len() - 1;
         if last_port > usize::from(u16::MAX) {
@@ -273,7 +285,7 @@ impl RealDittoTransport {
             fs::create_dir_all(&storage)?;
             let storage = CString::new(storage.to_string_lossy().as_bytes())?;
             let raw = RawPeer::open(&storage, &database_id, &license)?;
-            for collection in AUTONOMY_COLLECTIONS {
+            for collection in &config.collections {
                 raw.subscribe(&CString::new(format!("SELECT * FROM `{collection}`"))?)?;
             }
             let port = config.port_base + index as u16;
@@ -352,7 +364,7 @@ impl RealDittoTransport {
         value: Value,
         sim_time_s: f64,
     ) -> Result<(), RealDittoError> {
-        validate_collection(collection)?;
+        validate_collection(&self.config, collection)?;
         let peer = self
             .peers
             .get(entity_id)
@@ -380,7 +392,7 @@ impl RealDittoTransport {
         collection: &str,
         document_id: &str,
     ) -> Result<Option<Value>, RealDittoError> {
-        validate_collection(collection)?;
+        validate_collection(&self.config, collection)?;
         let peer = self
             .peers
             .get(entity_id)
@@ -398,7 +410,7 @@ impl RealDittoTransport {
             BTreeMap::new();
         for peer in self.peers.values() {
             let mut documents = BTreeMap::new();
-            for collection in AUTONOMY_COLLECTIONS {
+            for collection in &self.config.collections {
                 let query = CString::new(format!("SELECT * FROM `{collection}`"))?;
                 for document in peer.raw.query(&query, &[])? {
                     let Some(document_id) = document.get("_id").and_then(Value::as_str) else {
@@ -482,8 +494,24 @@ impl RealDittoTransport {
     }
 }
 
-fn validate_collection(collection: &str) -> Result<(), RealDittoError> {
-    if AUTONOMY_COLLECTIONS.contains(&collection) {
+fn validate_collection(config: &RealDittoConfig, collection: &str) -> Result<(), RealDittoError> {
+    if config
+        .collections
+        .iter()
+        .any(|configured| configured == collection)
+    {
+        Ok(())
+    } else {
+        Err(RealDittoError::InvalidCollection(collection.into()))
+    }
+}
+
+fn validate_collection_name(collection: &str) -> Result<(), RealDittoError> {
+    if !collection.is_empty()
+        && collection.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-')
+        })
+    {
         Ok(())
     } else {
         Err(RealDittoError::InvalidCollection(collection.into()))
@@ -553,4 +581,18 @@ fn connected_peers(links: &[RealDittoLink]) -> BTreeMap<String, Vec<String>> {
         .into_iter()
         .map(|(peer, neighbors)| (peer, neighbors.into_iter().collect()))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn configured_collection_names_are_safe_and_support_scenario_namespaces() {
+        for collection in ["cuas.tracks", "cuas.ew_assignments", "cuas.engagements"] {
+            validate_collection_name(collection).unwrap();
+        }
+        assert!(validate_collection_name("cuas.tracks`; DELETE").is_err());
+        assert!(validate_collection_name("").is_err());
+    }
 }
