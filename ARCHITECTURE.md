@@ -50,7 +50,7 @@ The `SigForgeBackend` Phase 1 stub implements the same trait but returns a clear
 
 ### Ditto peer and document layer
 
-Ditto is the primary inter-node communication model. C2 tasking, PLI, tracks, and platform telemetry live in the collections `c2.tasking`, `c2.pli`, `c2.tracks`, and `telemetry.platform`. Each peer updates its locally authored documents, discovers reachable peers from current `NetworkBackend` links, and exchanges newer document revisions within link quality/capacity budgets. Replicas remain available while disconnected and eventually converge when a path returns; no central broker is required.
+Ditto is the primary inter-node communication model. C2 tasking, PLI, tracks, and platform telemetry live in the collections `c2.tasking`, `c2.pli`, `c2.tracks`, and `telemetry.platform`. Each peer updates its locally authored documents, discovers reachable peers from current `NetworkBackend` links, and exchanges newer document revisions within link quality/capacity budgets. When two peers have several carriers up, Phase 1 moves document revisions over the highest-quality carrier and accounts for discovery/keepalive overhead on the others. Replicas remain available while disconnected and eventually converge when a path returns; no central broker is required.
 
 Phase 1 models CRDT behavior at the document/revision level: peer discovery, replica watermarks, bounded per-link propagation, pending-document counts, and convergence state. It intentionally does not embed `dittoffi`. Phase 2+ will replace this behavioral model with real Ditto small peers whose transports run through SigForge/CORE-EMANE, following the `ditto-barrage-*` scale-test pattern. The wire contract remains the observation boundary for both implementations.
 
@@ -218,7 +218,7 @@ Every configured compatible radio pair is present in `links`, including down lin
 
 ### Traffic state
 
-Traffic is a per-up-link aggregate for the current tick. In Phase 1 it is computed from completed document replication operations plus deterministic peer-discovery/keepalive overhead; it is not packet capture.
+Traffic is a per-up-link aggregate for the current tick. In Phase 1 it is computed from completed document replication operations plus deterministic peer-discovery/keepalive overhead; it is not packet capture. `pending_documents` counts documents whose revision differs between that link's endpoint replicas after the current tick.
 
 ```json
 {
@@ -243,7 +243,12 @@ Traffic is a per-up-link aggregate for the current tick. In Phase 1 it is comput
   "position": { "cartographicDegrees": [-117.2502, 34.0501, 180.0] },
   "point": { "pixelSize": 12, "color": { "rgba": [65, 191, 255, 255] } },
   "label": { "text": "UAV Alpha" },
-  "properties": { "entity_id": "uav-alpha", "kind": "drone", "domain": "air" }
+  "properties": {
+    "entity_id": "uav-alpha",
+    "ditto_peer_id": "ditto/uav-alpha",
+    "kind": "drone",
+    "domain": "air"
+  }
 }
 ```
 

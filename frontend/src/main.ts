@@ -163,9 +163,9 @@ function updateLinks(links: LinkState[], traffic: TrafficState[]): void {
     } else {
       linkVisuals.set(link.id, viewer.entities.add({
         id: link.id,
-        name: `${link.link_type.toUpperCase()} ${link.source} ↔ ${link.target}`,
+        name: `DITTO / ${link.link_type.toUpperCase()} ${link.source} ↔ ${link.target}`,
         polyline: { positions, width, material, arcType: Cesium.ArcType.NONE },
-        description: `Quality ${(link.quality * 100).toFixed(0)}% · ${link.distance_m.toFixed(0)} m · ${link.latency_ms.toFixed(1)} ms`,
+        description: `Ditto peer link over ${link.link_type}<br>${link.source_peer_id} ↔ ${link.target_peer_id}<br>Quality ${(link.quality * 100).toFixed(0)}% · ${link.distance_m.toFixed(0)} m · ${link.latency_ms.toFixed(1)} ms`,
       }));
     }
   }
@@ -182,6 +182,9 @@ function updateHud(frame: StateEnvelope): void {
   byId('simTime').textContent = formatTime(frame.sim_time_s);
   byId('entityCount').textContent = String(frame.payload.entities.length);
   byId('linkCount').textContent = String(frame.payload.links.filter((link) => link.state === 'up').length);
+  byId('documentCount').textContent = String(frame.payload.ditto_documents.length);
+  const convergedPeers = frame.payload.ditto_peers.filter((peer) => peer.converged).length;
+  byId('convergence').textContent = `${convergedPeers} / ${frame.payload.ditto_peers.length}`;
   byId('trafficRate').textContent = totalBps >= 1_000_000 ? `${(totalBps / 1_000_000).toFixed(1)} Mbps` : `${Math.round(totalBps / 1_000)} kbps`;
   for (const type of ['mesh', 'cellular', 'satcom', 'ble'] as LinkType[]) {
     byId(`${type}Count`).textContent = String(frame.payload.links.filter((link) => link.state === 'up' && link.link_type === type).length);
@@ -276,4 +279,3 @@ byId<HTMLButtonElement>('mode3d').addEventListener('click', () => {
 
 connect();
 (window as any).autonomySim = { viewer, entityVisuals, linkVisuals, reconnect: connect };
-

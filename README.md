@@ -1,8 +1,8 @@
 # autonomy-sim
 
-Phase 1 prototype of a defensive autonomy, mission, C2/TAK, and visualization layer for uncrewed-system simulation. It runs locally with a deterministic analytic network model; CORE, EMANE, SigForge, Ditto, Cesium ion, and a TAK server are not required.
+Phase 1 prototype of a defensive autonomy, mission, Ditto-first C2/TAK, and visualization layer for uncrewed-system simulation. It runs locally with a deterministic analytic network model; CORE, EMANE, SigForge, a native `dittoffi` runtime, Cesium ion, and a TAK server are not required.
 
-The included ISR scenario drives two drones, two people, a relay rover, and a C2 gateway. Auditable behavior trees execute area search, persistent surveillance, and communications-relay playbooks. As platforms move, simulated Ditto peer links appear and drop across mesh, cellular, satcom, and BLE transports.
+The included ISR scenario drives two drones, two people, a relay rover, and a C2 gateway. Every platform is a behavioral Ditto peer. C2 tasking, PLI, tracks, and telemetry are replicated documents that persist across partitions and converge peer-to-peer when links return. As platforms move, those Ditto peer links appear and drop across mesh, cellular, satcom, and BLE carriers.
 
 This project is for simulation, ISR, communications, and coordination only. It contains no lethal-engagement logic. Human authorization is enforced as a hard behavior-tree condition.
 
@@ -43,6 +43,7 @@ tail -f output/isr-demo.cot
 - `relay-one` uses a fallback subtree: it holds while the direct C2-to-Alpha mesh is up and moves toward the peers' midpoint when that link drops.
 - `scout-one` patrols beyond BLE range of `scout-two` while cellular connectivity persists.
 - Link color identifies transport; opacity indicates quality; line width indicates synthetic Ditto replication traffic. The right rail records link transitions.
+- The HUD exposes CRDT document and peer-convergence state; documents remain locally available during DDIL partitions and propagate after reconnection.
 - The 2D/3D switch preserves live platform state and tracks.
 
 ## API and wire contract
@@ -51,7 +52,7 @@ tail -f output/isr-demo.cot
 - `GET http://127.0.0.1:9000/api/v1/snapshot` — latest complete state envelope.
 - `ws://127.0.0.1:9000/api/v1/stream` — `hello`, immediate current `state`, then one complete `state` per simulation tick.
 
-The stable `autonomy-sim/v1` message schema, enum values, units, ordering, and CZML projection are defined in [ARCHITECTURE.md](ARCHITECTURE.md). State frames make entities, current link state, link transitions, traffic aggregates, and CZML explicit.
+The stable `autonomy-sim/v1` message schema, enum values, units, ordering, and CZML projection are defined in [ARCHITECTURE.md](ARCHITECTURE.md). State frames make entities, Ditto peer identities, document replicas, replication events, current carrier links, traffic aggregates, and CZML explicit.
 
 Inspect a snapshot:
 
@@ -119,7 +120,7 @@ interval_s = 1.0
 stale_after_s = 10
 ```
 
-Phase 1 emits friendly platform PLI/track events with contact and course/speed detail. UDP and TCP send newline-delimited standalone events. TAK tasking ingest is intentionally deferred until authentication, authorization, replay protection, validation, and explicit human approval are designed.
+The CoT component is a gateway at the ground-station Ditto peer, not a node-to-node transport. Phase 1 maps friendly PLI/track documents that have reached that gateway into CoT events with contact and course/speed detail. UDP and TCP send newline-delimited standalone events. The reverse TAK-to-Ditto mapping is intentionally deferred until authentication, authorization, replay protection, validation, and explicit human approval are designed.
 
 ## Development and verification
 
@@ -144,16 +145,18 @@ Implemented:
 - WGS84 entity/kinematics model across ground, air, maritime, and space domains.
 - Fixed-step scheduler and validated TOML scenarios.
 - Auditable sequence, fallback, and parallel behavior trees with ISR/coverage/relay playbooks.
-- `NetworkBackend` and `PropagationModel` traits, outdoor analytic networking, four link types, transition events, quality/loss/latency/capacity, and deterministic synthetic Ditto traffic.
+- `NetworkBackend` and `PropagationModel` traits, outdoor analytic networking, four carrier types, transition events, quality/loss/latency/capacity, and deterministic Ditto replication traffic.
+- A behavioral Ditto model with one peer per entity, `c2.tasking`, `c2.pli`, `c2.tracks`, and `telemetry.platform` collections, bounded per-link document propagation, offline persistence, and eventual convergence after reconnect.
 - Axum REST snapshot and Tokio WebSocket state streamer using the documented v1 contract and CZML-compatible packets.
-- CoT PLI/track XML with file, UDP, and TCP sinks.
+- A Ditto-to-CoT gateway with PLI/track XML and file, UDP, and TCP sinks.
 - CesiumJS 2D and 3D modes, platform tracks, live link reconciliation, transport styling, traffic indication, and optional Google Photorealistic 3D Tiles.
 
 Stubbed or deferred:
 
 - The `SigForgeBackend` is an explicit trait implementation that fails closed with integration guidance; real SigForge API/WebSocket/PHY integration is Phase 2.
-- CoT/TAK ingest and production TAK Server certificate handling are Phase 2.
-- Analytic traffic is a deterministic aggregate, not Ditto packet capture.
+- Native Ditto small-peer/`dittoffi` nodes over SigForge/CORE-EMANE are Phase 2; Phase 1 models CRDT convergence behavior rather than running the production Ditto engine.
+- TAK-to-Ditto ingest and production TAK Server certificate handling are Phase 2.
+- Analytic traffic is a deterministic document-operation aggregate, not a Ditto packet capture.
 - Terrain/LOS, indoor body blocking, urban propagation, and ns-3 are later `PropagationModel` implementations.
 - MAP-Elites is a Phase 4 offline playbook-library mechanism, not part of runtime mission execution.
 
