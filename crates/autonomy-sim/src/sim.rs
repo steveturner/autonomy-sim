@@ -241,7 +241,7 @@ impl Simulation {
                 .iter()
                 .map(|agent| agent.entity.clone())
                 .collect();
-            let cuas_tick = cuas.tick(&entities, dt_s, self.sim_time_s);
+            let cuas_tick = cuas.tick(&entities, dt_s, self.sim_time_s, &self.ditto);
             for update in cuas_tick.entity_updates {
                 if let Some(agent) = self
                     .agents

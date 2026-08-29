@@ -13,6 +13,7 @@ use crate::{
         CUAS_ENGAGEMENTS_COLLECTION, CUAS_EW_ASSIGNMENTS_COLLECTION, CUAS_TRACKS_COLLECTION,
         CoordinationDocument,
     },
+    ditto_transport::DittoRuntime,
     model::{Entity, EntityKind, Kinematics, Position},
     scenario::CuasConfig,
 };
@@ -165,7 +166,13 @@ impl CuasRuntime {
         }
     }
 
-    pub fn tick(&mut self, entities: &[Entity], dt_s: f64, sim_time_s: f64) -> CuasTick {
+    pub fn tick(
+        &mut self,
+        entities: &[Entity],
+        dt_s: f64,
+        sim_time_s: f64,
+        ditto: &DittoRuntime,
+    ) -> CuasTick {
         let entity_by_id: BTreeMap<_, _> = entities
             .iter()
             .map(|entity| (entity.id.as_str(), entity))
@@ -204,7 +211,15 @@ impl CuasRuntime {
                 }
                 ThreatPhase::Detected => {
                     let elapsed = sim_time_s - mission.phase_since_s;
-                    if !mission.ew_considered && elapsed >= self.config.detection_delay_s {
+                    if !mission.ew_considered
+                        && elapsed >= self.config.detection_delay_s
+                        && any_peer_has_document(
+                            ditto,
+                            &self.jammer_ids,
+                            CUAS_TRACKS_COLLECTION,
+                            &format!("track/{threat_id}"),
+                        )
+                    {
                         mission.ew_considered = true;
                         if self.ew_assignments < self.config.ew_capacity {
                             let slot = self.ew_assignments;
@@ -242,6 +257,12 @@ impl CuasRuntime {
                 ThreatPhase::EwLeak => {
                     if !mission.interceptor_considered
                         && distance_to_site <= self.config.interceptor_range_m
+                        && any_peer_has_document(
+                            ditto,
+                            &self.interceptor_ids,
+                            CUAS_EW_ASSIGNMENTS_COLLECTION,
+                            &format!("ew-assignment/{threat_id}"),
+                        )
                     {
                         mission.interceptor_considered = true;
                         if self.interceptor_assignments < self.config.interceptor_capacity {
@@ -272,6 +293,12 @@ impl CuasRuntime {
                     } else if mission.interceptor_considered
                         && mission.interceptor_asset.is_none()
                         && distance_to_site <= self.config.gun_range_m
+                        && any_peer_has_document(
+                            ditto,
+                            &self.gun_ids,
+                            CUAS_ENGAGEMENTS_COLLECTION,
+                            &format!("engagement/interceptor/{threat_id}"),
+                        )
                     {
                         engage_gun(
                             mission,
@@ -288,7 +315,15 @@ impl CuasRuntime {
                 {
                     transition(mission, ThreatPhase::Neutralized, sim_time_s);
                 }
-                ThreatPhase::InterceptorLeak if distance_to_site <= self.config.gun_range_m => {
+                ThreatPhase::InterceptorLeak
+                    if distance_to_site <= self.config.gun_range_m
+                        && any_peer_has_document(
+                            ditto,
+                            &self.gun_ids,
+                            CUAS_ENGAGEMENTS_COLLECTION,
+                            &format!("engagement/interceptor/{threat_id}"),
+                        ) =>
+                {
                     engage_gun(
                         mission,
                         &self.gun_ids,
@@ -512,6 +547,19 @@ fn effect_succeeds(seed: u64, threat_id: &str, layer: &str, probability: f64) ->
         });
     let roll = (hash % 1_000_000) as f64 / 1_000_000.0;
     roll < probability
+}
+
+fn any_peer_has_document(
+    ditto: &DittoRuntime,
+    entity_ids: &[String],
+    collection: &str,
+    document_id: &str,
+) -> bool {
+    entity_ids.iter().any(|entity_id| {
+        ditto
+            .peer_has_latest(entity_id, collection, document_id)
+            .unwrap_or(false)
+    })
 }
 
 fn horizontal_distance(left: Position, right: Position) -> f64 {

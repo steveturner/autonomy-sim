@@ -330,6 +330,18 @@ impl DittoModel {
             })
     }
 
+    pub fn read_document(
+        &self,
+        entity_id: &str,
+        collection: &str,
+        document_id: &str,
+    ) -> Option<serde_json::Value> {
+        let peer = self.entity_to_peer.get(entity_id)?;
+        let document = self.documents.get(&document_key(collection, document_id))?;
+        (document.peer_revisions.get(peer).copied().unwrap_or(0) > 0)
+            .then(|| document.value.clone())
+    }
+
     pub fn upsert_document(
         &mut self,
         collection: &str,

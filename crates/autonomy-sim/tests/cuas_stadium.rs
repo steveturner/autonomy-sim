@@ -94,3 +94,39 @@ fn stadium_funnel_runs_end_to_end_and_excludes_threats_from_ditto() {
     assert!(saw_interceptor_capacity_leak);
     assert!(saw_abstract_gun);
 }
+
+#[test]
+fn downstream_layers_wait_for_documents_to_reach_defender_peers() {
+    let scenarios = concat!(env!("CARGO_MANIFEST_DIR"), "/../../scenarios");
+    let mut config = ScenarioRegistry::new(scenarios)
+        .load("cuas-stadium")
+        .unwrap();
+    for radio in config.nodes.iter_mut().flat_map(|node| &mut node.radios) {
+        radio.range_m = 0.0;
+    }
+    let mut simulation = Simulation::try_new(&config).unwrap();
+    let mut last = simulation.snapshot().unwrap();
+    for _ in 0..100 {
+        last = simulation.tick().unwrap();
+    }
+    assert!(
+        last.payload
+            .ditto_documents
+            .iter()
+            .any(|document| document.collection == CUAS_TRACKS_COLLECTION)
+    );
+    assert!(
+        last.payload
+            .ditto_documents
+            .iter()
+            .all(|document| document.collection != CUAS_EW_ASSIGNMENTS_COLLECTION),
+        "EW must wait until a jammer peer can read the radar track"
+    );
+    assert!(
+        last.payload
+            .entities
+            .iter()
+            .filter(|entity| entity.kind == EntityKind::ThreatUas)
+            .all(|entity| matches!(entity.mission_state.as_str(), "inbound" | "detected"))
+    );
+}
