@@ -85,3 +85,29 @@ Ditto requires bidirectional reachability, so both directed measurements must ex
 `SigForgeApi` is the narrow trait boundary for alternate WS/gRPC clients and is exercised with a fake client. A loopback HTTP test verifies the concrete REST paths and request bodies. The current SigForge reference service acknowledges REST position updates but may require its WS mobility path for a live EMANE session; the adapter still publishes the update and consumes the real link matrix. The adapter supports plain HTTP, so use a local TLS-terminating proxy if necessary.
 
 The existing scenario setting `network_backend = "sigforge"` now constructs this production REST adapter using `sigforge_url`; `analytic` remains the default. The CLI selects the document transport independently with `--ditto behavioral|real`. Neither selection changes the v1 wire schema.
+
+Run an existing scenario against a live SigForge session without editing its TOML:
+
+```bash
+make demo-sigforge \
+  SCENARIO=isr-relay-demo \
+  SIGFORGE_URL=http://127.0.0.1:8080
+```
+
+The equivalent direct command is:
+
+```bash
+cargo run -p autonomy-sim -- \
+  --scenario isr-relay-demo \
+  --network-backend sigforge \
+  --sigforge-url http://127.0.0.1:8080
+```
+
+`--network-backend analytic` explicitly forces the zero-dependency analytic backend. With no CLI network selector, the scenario's `network_backend` and `sigforge_url` remain authoritative. Passing `--sigforge-url` without `--network-backend sigforge` is rejected to avoid silently selecting a live external backend.
+
+The network and document selectors are independent, so a real-Ditto scenario can consume SigForge link state with:
+
+```bash
+DITTO_REAL_ARGS='--scenario isr-relay-demo --network-backend sigforge --sigforge-url http://127.0.0.1:8080' \
+  make demo-ditto-real DITTO_SOURCE_DIR="$DITTO_SOURCE_DIR"
+```

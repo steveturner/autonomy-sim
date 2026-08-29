@@ -40,6 +40,7 @@ fn selected_real_transport_drives_simulation_observations() {
             port_base: available_port_block(config.nodes.len() as u16),
             listen_ip: "127.0.0.1".into(),
         }),
+        ..SimulationOptions::default()
     };
     let mut simulation = Simulation::try_new_with_options(&config, &options).unwrap();
 

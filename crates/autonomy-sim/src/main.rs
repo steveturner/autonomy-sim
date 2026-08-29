@@ -2,7 +2,7 @@ use std::{env, net::SocketAddr, path::PathBuf};
 
 use anyhow::{Context, Result, bail};
 use autonomy_sim::{
-    Simulation, SimulationOptions,
+    NetworkBackendSelection, Simulation, SimulationOptions,
     ditto_transport::{DittoTransportConfig, RealDittoOptions},
     scenario::ScenarioRegistry,
     server,
@@ -21,6 +21,16 @@ struct Args {
 
     #[arg(long, value_enum, default_value_t = DittoTransportArg::Behavioral)]
     ditto: DittoTransportArg,
+
+    #[arg(
+        long,
+        value_enum,
+        help = "Override the scenario network backend (default: scenario configuration)"
+    )]
+    network_backend: Option<NetworkBackendArg>,
+
+    #[arg(long, help = "SigForge REST base URL for a CLI backend override")]
+    sigforge_url: Option<String>,
 
     #[arg(long, default_value = "target/ditto-real")]
     ditto_storage_root: PathBuf,
@@ -41,6 +51,30 @@ enum DittoTransportArg {
     Real,
 }
 
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum NetworkBackendArg {
+    Analytic,
+    Sigforge,
+}
+
+fn network_selection(
+    backend: Option<NetworkBackendArg>,
+    sigforge_url: Option<String>,
+    scenario_sigforge_url: &str,
+) -> Result<Option<NetworkBackendSelection>> {
+    Ok(match (backend, sigforge_url) {
+        (None, None) => None,
+        (None, Some(_)) => bail!("--sigforge-url requires --network-backend sigforge"),
+        (Some(NetworkBackendArg::Analytic), None) => Some(NetworkBackendSelection::Analytic),
+        (Some(NetworkBackendArg::Analytic), Some(_)) => {
+            bail!("--sigforge-url cannot be used with --network-backend analytic")
+        }
+        (Some(NetworkBackendArg::Sigforge), base_url) => Some(NetworkBackendSelection::SigForge {
+            base_url: base_url.unwrap_or_else(|| scenario_sigforge_url.to_owned()),
+        }),
+    })
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -56,7 +90,13 @@ async fn main() -> Result<()> {
         Some(bind) => bind,
         None => config.api.bind.parse().context("parsing api.bind")?,
     };
+    let network = network_selection(
+        args.network_backend,
+        args.sigforge_url,
+        &config.simulation.sigforge_url,
+    )?;
     let options = SimulationOptions {
+        network,
         ditto: match args.ditto {
             DittoTransportArg::Behavioral => DittoTransportConfig::Behavioral,
             DittoTransportArg::Real => {
@@ -83,4 +123,49 @@ async fn main() -> Result<()> {
         registry,
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_independent_ditto_and_network_selectors() {
+        let args = Args::try_parse_from([
+            "autonomy-sim",
+            "--ditto",
+            "real",
+            "--network-backend",
+            "sigforge",
+            "--sigforge-url",
+            "http://127.0.0.1:8080",
+        ])
+        .unwrap();
+
+        assert!(matches!(args.ditto, DittoTransportArg::Real));
+        assert!(matches!(
+            args.network_backend,
+            Some(NetworkBackendArg::Sigforge)
+        ));
+        assert_eq!(args.sigforge_url.as_deref(), Some("http://127.0.0.1:8080"));
+    }
+
+    #[test]
+    fn network_selector_preserves_scenario_default_and_validates_url() {
+        assert!(
+            network_selection(None, None, "http://scenario")
+                .unwrap()
+                .is_none()
+        );
+
+        let selection =
+            network_selection(Some(NetworkBackendArg::Sigforge), None, "http://scenario").unwrap();
+        assert!(matches!(
+            selection,
+            Some(NetworkBackendSelection::SigForge { base_url })
+                if base_url == "http://scenario"
+        ));
+
+        assert!(network_selection(None, Some("http://unused".into()), "http://scenario").is_err());
+    }
 }

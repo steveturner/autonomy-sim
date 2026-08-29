@@ -45,6 +45,14 @@ pub struct Simulation {
 #[derive(Clone, Debug, Default)]
 pub struct SimulationOptions {
     pub ditto: DittoTransportConfig,
+    /// Overrides the scenario's network backend when supplied by the caller.
+    pub network: Option<NetworkBackendSelection>,
+}
+
+#[derive(Clone, Debug)]
+pub enum NetworkBackendSelection {
+    Analytic,
+    SigForge { base_url: String },
 }
 
 impl Simulation {
@@ -125,10 +133,15 @@ impl Simulation {
                 behavior: BehaviorRuntime::for_playbook("hold"),
             }));
         }
-        let mut network: Box<dyn NetworkBackend> = match config.simulation.network_backend.as_str()
-        {
-            "sigforge" => Box::new(SigForgeBackend::connect(&config.simulation.sigforge_url)?),
-            _ => Box::new(AnalyticNetworkBackend::default()),
+        let mut network: Box<dyn NetworkBackend> = match &options.network {
+            Some(NetworkBackendSelection::Analytic) => Box::new(AnalyticNetworkBackend::default()),
+            Some(NetworkBackendSelection::SigForge { base_url }) => {
+                Box::new(SigForgeBackend::connect(base_url)?)
+            }
+            None => match config.simulation.network_backend.as_str() {
+                "sigforge" => Box::new(SigForgeBackend::connect(&config.simulation.sigforge_url)?),
+                _ => Box::new(AnalyticNetworkBackend::default()),
+            },
         };
         let entities: Vec<_> = agents.iter().map(|agent| agent.entity.clone()).collect();
         let gateway_entity_id = entities
@@ -463,5 +476,19 @@ mod tests {
         let frame = simulation.tick().unwrap();
         assert!(frame.payload.ditto_documents.len() >= 7);
         assert!(!frame.payload.ditto_replication_events.is_empty());
+    }
+
+    #[test]
+    fn explicit_analytic_backend_overrides_scenario_sigforge_selection() {
+        let mut config = config();
+        config.simulation.network_backend = "sigforge".into();
+        config.simulation.sigforge_url = "http://127.0.0.1:1".into();
+        let options = SimulationOptions {
+            network: Some(NetworkBackendSelection::Analytic),
+            ..SimulationOptions::default()
+        };
+
+        let mut simulation = Simulation::try_new_with_options(&config, &options).unwrap();
+        assert_eq!(simulation.snapshot().unwrap().payload.links.len(), 1);
     }
 }

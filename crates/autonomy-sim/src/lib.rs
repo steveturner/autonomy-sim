@@ -16,4 +16,4 @@ pub mod wildfire;
 pub mod wire;
 
 pub use scenario::ScenarioConfig;
-pub use sim::{Simulation, SimulationOptions};
+pub use sim::{NetworkBackendSelection, Simulation, SimulationOptions};

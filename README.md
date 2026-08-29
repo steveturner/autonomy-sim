@@ -142,6 +142,8 @@ waypoints = [
 ]
 ```
 
+The analytic network and behavioral Ditto transport remain the defaults. Override them independently at startup with `--network-backend analytic|sigforge` and `--ditto behavioral|real`; `make demo-sigforge` and `make demo-ditto-real` provide the corresponding runnable entry points.
+
 Registered scenario names can be passed without a path, for example `cargo run -- --scenario wildfire-paradise`. Kinds are `uas`, `air_tanker`, `rotary`, `person`, `ground_vehicle`, `base`, `fire`, `waypoint`, `threat_uas`, `radar_sensor`, `ew_jammer`, `interceptor`, `gun_system`, and `protected_site`; domains are `ground`, `air`, `maritime`, and `space`. Radios use `mesh`, `cellular`, `satcom`, or `ble`. Standard playbooks are `hold`, `area_search`, `persistent_surveillance`, and `comms_relay`; the `wildfire` builder adds `firefighting`. Invalid scenarios fail before the server binds.
 
 Run another scenario or override the API address directly:
@@ -195,7 +197,7 @@ Implemented:
 - `NetworkBackend` and `PropagationModel` traits, outdoor analytic networking, four carrier types, transition events, quality/loss/latency/capacity, and deterministic Ditto replication traffic.
 - A behavioral Ditto model with one peer per entity, `c2.tasking`, `c2.pli`, `c2.tracks`, and `telemetry.platform` collections, bounded per-link document propagation, offline persistence, and eventual convergence after reconnect.
 - An opt-in native `dittoffi` transport selected with `--ditto real`, with one real small peer and persistent store per entity, real DQL collection writes/subscriptions, explicit-TCP reachability controlled by current `NetworkBackend` links, and process-level convergence/partition integration tests.
-- A dependency-light SigForge REST `NetworkBackend` adapter that publishes entity positions, consumes directed per-link SINR, and maps bidirectional PHY state into autonomy-sim link status and metrics behind a mockable API boundary.
+- A dependency-light SigForge REST `NetworkBackend` adapter selected by scenario config or `--network-backend sigforge`, which publishes entity positions, consumes directed per-link SINR, and maps bidirectional PHY state into autonomy-sim link status and metrics behind a mockable API boundary.
 - Axum REST snapshot and Tokio WebSocket state streamer using the documented v1 contract and CZML-compatible packets.
 - A Ditto-to-CoT gateway with PLI/track XML and file, UDP, and TCP sinks.
 - CesiumJS 2D and 3D modes, platform tracks, live link reconciliation, transport styling, traffic indication, and optional Google Photorealistic 3D Tiles.

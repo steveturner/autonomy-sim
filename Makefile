@@ -1,6 +1,8 @@
-.PHONY: setup live demo wildfire wildfire-live frontend check build-dittoffi test-ditto-real demo-ditto-real demo-ditto-peers clean-output
+.PHONY: setup live demo wildfire wildfire-live frontend check demo-sigforge build-dittoffi test-ditto-real demo-ditto-real demo-ditto-peers clean-output
 
 HOST ?= 127.0.0.1
+SCENARIO ?= isr-relay-demo
+SIGFORGE_URL ?= http://127.0.0.1:8080
 DITTO_SOURCE_DIR ?=
 DITTO_BUILD_TARGET_DIR ?= $(CURDIR)/target/dittoffi
 
@@ -33,6 +35,9 @@ check:
 	cargo clippy --workspace --all-targets -- -D warnings
 	cargo test --workspace
 	npm --prefix frontend run build
+
+demo-sigforge:
+	cargo run -p autonomy-sim -- --scenario "$(SCENARIO)" --network-backend sigforge --sigforge-url "$(SIGFORGE_URL)" $${SIGFORGE_ARGS:-}
 
 build-dittoffi:
 	@test -n "$(DITTO_SOURCE_DIR)" || { echo "set DITTO_SOURCE_DIR to a Ditto source checkout"; exit 2; }
