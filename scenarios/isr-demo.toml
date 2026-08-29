@@ -25,7 +25,7 @@ stale_after_s = 10
 [[nodes]]
 id = "ground-c2"
 name = "C2 Gateway"
-kind = "ground_station"
+kind = "base"
 domain = "ground"
 position = { lat_deg = 34.0500, lon_deg = -117.2500, alt_m = 315.0 }
 
@@ -56,7 +56,7 @@ human_authorized = true
 [[nodes]]
 id = "uav-alpha"
 name = "UAV Alpha"
-kind = "drone"
+kind = "uas"
 domain = "air"
 position = { lat_deg = 34.0502, lon_deg = -117.2498, alt_m = 520.0 }
 
@@ -88,7 +88,7 @@ waypoints = [
 [[nodes]]
 id = "uav-bravo"
 name = "UAV Bravo"
-kind = "drone"
+kind = "uas"
 domain = "air"
 position = { lat_deg = 34.0550, lon_deg = -117.2450, alt_m = 610.0 }
 
@@ -190,4 +190,3 @@ base_latency_ms = 38.0
 [nodes.mission]
 playbook = "hold"
 human_authorized = true
-

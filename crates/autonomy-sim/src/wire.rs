@@ -42,7 +42,28 @@ pub struct StatePayload {
     pub ditto_peers: Vec<DittoPeerState>,
     pub ditto_documents: Vec<DittoDocumentState>,
     pub ditto_replication_events: Vec<DittoReplicationEvent>,
+    pub fire_cells: Vec<FireCellState>,
+    pub base: Option<BaseState>,
     pub czml: Vec<serde_json::Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct FireCellState {
+    pub id: String,
+    pub position: Position,
+    pub intensity: f64,
+    pub assigned_tanker: Option<String>,
+    pub status: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct BaseState {
+    pub id: String,
+    pub name: String,
+    pub position: Position,
+    pub reload_slots: usize,
+    pub occupied_slots: Vec<String>,
+    pub queue: Vec<String>,
 }
 
 pub fn link_czml(
@@ -102,6 +123,11 @@ pub fn entity_czml(entity: &Entity) -> serde_json::Value {
         crate::model::Domain::Maritime => [49, 120, 198, 255],
         crate::model::Domain::Space => [255, 202, 58, 255],
     };
+    let ditto_peer_id = (!matches!(
+        entity.kind,
+        crate::model::EntityKind::Fire | crate::model::EntityKind::Waypoint
+    ))
+    .then(|| peer_id(&entity.id));
     serde_json::json!({
         "id": format!("entity/{}", entity.id),
         "name": entity.name,
@@ -112,23 +138,41 @@ pub fn entity_czml(entity: &Entity) -> serde_json::Value {
         "label": { "text": entity.name },
         "properties": {
             "entity_id": entity.id,
-            "ditto_peer_id": peer_id(&entity.id),
+            "ditto_peer_id": ditto_peer_id,
             "kind": entity.kind,
+            "affiliation": entity.affiliation,
+            "sidc": entity.sidc,
+            "icon_hint": entity.icon_hint,
             "domain": entity.domain,
+            "mission_role": entity.mission_role,
+            "mission_state": entity.mission_state,
+            "heading_deg": entity.heading_deg,
+            "retardant_pct": entity.retardant_pct,
+            "intensity": entity.intensity,
         }
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::model::{Domain, Entity, EntityKind, Kinematics, MissionState, Position};
+    use crate::{
+        model::{Affiliation, Domain, Entity, EntityKind, Kinematics, MissionState, Position},
+        symbology::{SymbolStatus, icon_hint, sidc},
+    };
 
     #[test]
     fn czml_uses_longitude_latitude_order() {
         let entity = Entity {
             id: "one".into(),
             name: "One".into(),
-            kind: EntityKind::Drone,
+            kind: EntityKind::Uas,
+            affiliation: Affiliation::Friendly,
+            sidc: sidc(
+                EntityKind::Uas,
+                Affiliation::Friendly,
+                SymbolStatus::Present,
+            ),
+            icon_hint: icon_hint(EntityKind::Uas).into(),
             domain: Domain::Air,
             position: Position {
                 lat_deg: 34.0,
@@ -137,6 +181,11 @@ mod tests {
             },
             kinematics: Kinematics::default(),
             mission: MissionState::default(),
+            mission_role: "scout".into(),
+            mission_state: "holding".into(),
+            heading_deg: 0.0,
+            retardant_pct: None,
+            intensity: None,
             radios: Vec::new(),
         };
         let packet = super::entity_czml(&entity);

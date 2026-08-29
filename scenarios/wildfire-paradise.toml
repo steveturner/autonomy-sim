@@ -1,0 +1,364 @@
+# Defensive wildfire aerial-firefighting simulation. The mission contains no
+# weapons or engagement logic: aircraft coordinate retardant drops and reloads.
+
+[scenario]
+name = "wildfire-paradise"
+description = "Twelve UAS air tankers coordinate fire-suppression drops between Grass Valley AAB and Paradise"
+seed = 20261108
+realtime = true
+builder = "wildfire"
+
+[simulation]
+tick_hz = 5.0
+network_backend = "analytic"
+
+[api]
+bind = "127.0.0.1:9000"
+
+[cot]
+sink = "disabled"
+interval_s = 1.0
+stale_after_s = 10
+
+[wildfire]
+base_id = "grass-valley-aab"
+supervisor_id = "grass-valley-aab"
+reload_slots = 3
+reload_time_s = 45.0
+drop_duration_s = 5.0
+drop_effect = 45.0
+on_station_s = 3.0
+egress_time_s = 12.0
+launch_interval_s = 4.0
+arrival_radius_m = 650.0
+base_arrival_radius_m = 350.0
+approach_distance_m = 4000.0
+base_approach_lane_deg = 135.0
+spread_per_s = 0.04
+
+[wildfire.flocking]
+neighbor_radius_m = 2400.0
+separation_radius_m = 280.0
+separation_weight = 1.8
+alignment_weight = 0.8
+cohesion_weight = 0.55
+goal_weight = 3.2
+min_speed_mps = 78.0
+max_speed_mps = 96.0
+max_turn_rate_deg_s = 12.0
+
+[[wildfire.fire_cells]]
+id = "paradise-fire-01"
+name = "Paradise Fire Cell 01"
+position = { lat_deg = 39.7596, lon_deg = -121.6219, alt_m = 532.0 }
+intensity = 92.0
+
+[[wildfire.fire_cells]]
+id = "paradise-fire-02"
+name = "Paradise Fire Cell 02"
+position = { lat_deg = 39.7627, lon_deg = -121.6178, alt_m = 545.0 }
+intensity = 84.0
+
+[[wildfire.fire_cells]]
+id = "paradise-fire-03"
+name = "Paradise Fire Cell 03"
+position = { lat_deg = 39.7564, lon_deg = -121.6260, alt_m = 520.0 }
+intensity = 78.0
+
+[[wildfire.fire_cells]]
+id = "paradise-fire-04"
+name = "Paradise Fire Cell 04"
+position = { lat_deg = 39.7660, lon_deg = -121.6231, alt_m = 558.0 }
+intensity = 72.0
+
+[[wildfire.fire_cells]]
+id = "paradise-fire-05"
+name = "Paradise Fire Cell 05"
+position = { lat_deg = 39.7535, lon_deg = -121.6183, alt_m = 505.0 }
+intensity = 68.0
+
+[[wildfire.fire_cells]]
+id = "paradise-fire-06"
+name = "Paradise Fire Cell 06"
+position = { lat_deg = 39.7608, lon_deg = -121.6300, alt_m = 540.0 }
+intensity = 64.0
+
+[[wildfire.fire_cells]]
+id = "paradise-fire-07"
+name = "Paradise Fire Cell 07"
+position = { lat_deg = 39.7690, lon_deg = -121.6144, alt_m = 565.0 }
+intensity = 58.0
+
+[[wildfire.fire_cells]]
+id = "paradise-fire-08"
+name = "Paradise Fire Cell 08"
+position = { lat_deg = 39.7502, lon_deg = -121.6290, alt_m = 495.0 }
+intensity = 54.0
+
+[[wildfire.fire_cells]]
+id = "paradise-fire-09"
+name = "Paradise Fire Cell 09"
+position = { lat_deg = 39.7720, lon_deg = -121.6264, alt_m = 575.0 }
+intensity = 48.0
+
+# Grass Valley Air Attack Base at Nevada County Airport (KGOO). This Ditto
+# peer is the AAB supervisor and authors fire-cell and reload-queue documents.
+[[nodes]]
+id = "grass-valley-aab"
+name = "Grass Valley Air Attack Base"
+kind = "base"
+affiliation = "friendly"
+domain = "ground"
+mission_role = "air_attack_base"
+position = { lat_deg = 39.2244, lon_deg = -121.0030, alt_m = 1017.0 }
+
+[[nodes.radios]]
+link_type = "mesh"
+range_m = 25000.0
+capacity_bps = 8000000
+base_latency_ms = 10.0
+
+[[nodes.radios]]
+link_type = "satcom"
+range_m = 150000.0
+capacity_bps = 2000000
+base_latency_ms = 140.0
+
+[nodes.mission]
+playbook = "hold"
+human_authorized = true
+
+# Lead plane/supervisor support aircraft; it performs ISR/coordination only.
+[[nodes]]
+id = "lead-01"
+name = "Paradise Lead Plane"
+kind = "uas"
+affiliation = "friendly"
+domain = "air"
+mission_role = "leadplane"
+position = { lat_deg = 39.2252, lon_deg = -121.0040, alt_m = 1650.0 }
+
+[[nodes.radios]]
+link_type = "mesh"
+range_m = 25000.0
+capacity_bps = 8000000
+base_latency_ms = 10.0
+
+[[nodes.radios]]
+link_type = "satcom"
+range_m = 150000.0
+capacity_bps = 2000000
+base_latency_ms = 140.0
+
+[nodes.mission]
+playbook = "persistent_surveillance"
+speed_mps = 70.0
+center = { lat_deg = 39.7596, lon_deg = -121.6219, alt_m = 1650.0 }
+radius_m = 1800.0
+human_authorized = true
+
+# Twelve deterministic UAS air tankers. Small initial offsets avoid co-located
+# boids while keeping the formation at the air-attack base.
+[[nodes]]
+id = "tanker-01"
+name = "Tanker UAS 01"
+kind = "air_tanker"
+affiliation = "friendly"
+domain = "air"
+mission_role = "tanker"
+position = { lat_deg = 39.2250, lon_deg = -121.0038, alt_m = 1500.0 }
+radios = [
+  { link_type = "mesh", range_m = 25000.0, capacity_bps = 8000000, base_latency_ms = 10.0 },
+  { link_type = "satcom", range_m = 150000.0, capacity_bps = 2000000, base_latency_ms = 140.0 },
+]
+[nodes.mission]
+playbook = "firefighting"
+speed_mps = 88.0
+human_authorized = true
+
+[[nodes]]
+id = "tanker-02"
+name = "Tanker UAS 02"
+kind = "air_tanker"
+affiliation = "friendly"
+domain = "air"
+mission_role = "tanker"
+position = { lat_deg = 39.2248, lon_deg = -121.0020, alt_m = 1510.0 }
+radios = [
+  { link_type = "mesh", range_m = 25000.0, capacity_bps = 8000000, base_latency_ms = 10.0 },
+  { link_type = "satcom", range_m = 150000.0, capacity_bps = 2000000, base_latency_ms = 140.0 },
+]
+[nodes.mission]
+playbook = "firefighting"
+speed_mps = 88.0
+human_authorized = true
+
+[[nodes]]
+id = "tanker-03"
+name = "Tanker UAS 03"
+kind = "air_tanker"
+affiliation = "friendly"
+domain = "air"
+mission_role = "tanker"
+position = { lat_deg = 39.2238, lon_deg = -121.0037, alt_m = 1520.0 }
+radios = [
+  { link_type = "mesh", range_m = 25000.0, capacity_bps = 8000000, base_latency_ms = 10.0 },
+  { link_type = "satcom", range_m = 150000.0, capacity_bps = 2000000, base_latency_ms = 140.0 },
+]
+[nodes.mission]
+playbook = "firefighting"
+speed_mps = 88.0
+human_authorized = true
+
+[[nodes]]
+id = "tanker-04"
+name = "Tanker UAS 04"
+kind = "air_tanker"
+affiliation = "friendly"
+domain = "air"
+mission_role = "tanker"
+position = { lat_deg = 39.2236, lon_deg = -121.0018, alt_m = 1530.0 }
+radios = [
+  { link_type = "mesh", range_m = 25000.0, capacity_bps = 8000000, base_latency_ms = 10.0 },
+  { link_type = "satcom", range_m = 150000.0, capacity_bps = 2000000, base_latency_ms = 140.0 },
+]
+[nodes.mission]
+playbook = "firefighting"
+speed_mps = 88.0
+human_authorized = true
+
+[[nodes]]
+id = "tanker-05"
+name = "Tanker UAS 05"
+kind = "air_tanker"
+affiliation = "friendly"
+domain = "air"
+mission_role = "tanker"
+position = { lat_deg = 39.2257, lon_deg = -121.0028, alt_m = 1540.0 }
+radios = [
+  { link_type = "mesh", range_m = 25000.0, capacity_bps = 8000000, base_latency_ms = 10.0 },
+  { link_type = "satcom", range_m = 150000.0, capacity_bps = 2000000, base_latency_ms = 140.0 },
+]
+[nodes.mission]
+playbook = "firefighting"
+speed_mps = 88.0
+human_authorized = true
+
+[[nodes]]
+id = "tanker-06"
+name = "Tanker UAS 06"
+kind = "air_tanker"
+affiliation = "friendly"
+domain = "air"
+mission_role = "tanker"
+position = { lat_deg = 39.2229, lon_deg = -121.0029, alt_m = 1550.0 }
+radios = [
+  { link_type = "mesh", range_m = 25000.0, capacity_bps = 8000000, base_latency_ms = 10.0 },
+  { link_type = "satcom", range_m = 150000.0, capacity_bps = 2000000, base_latency_ms = 140.0 },
+]
+[nodes.mission]
+playbook = "firefighting"
+speed_mps = 88.0
+human_authorized = true
+
+[[nodes]]
+id = "tanker-07"
+name = "Tanker UAS 07"
+kind = "air_tanker"
+affiliation = "friendly"
+domain = "air"
+mission_role = "tanker"
+position = { lat_deg = 39.2262, lon_deg = -121.0045, alt_m = 1560.0 }
+radios = [
+  { link_type = "mesh", range_m = 25000.0, capacity_bps = 8000000, base_latency_ms = 10.0 },
+  { link_type = "satcom", range_m = 150000.0, capacity_bps = 2000000, base_latency_ms = 140.0 },
+]
+[nodes.mission]
+playbook = "firefighting"
+speed_mps = 88.0
+human_authorized = true
+
+[[nodes]]
+id = "tanker-08"
+name = "Tanker UAS 08"
+kind = "air_tanker"
+affiliation = "friendly"
+domain = "air"
+mission_role = "tanker"
+position = { lat_deg = 39.2224, lon_deg = -121.0015, alt_m = 1570.0 }
+radios = [
+  { link_type = "mesh", range_m = 25000.0, capacity_bps = 8000000, base_latency_ms = 10.0 },
+  { link_type = "satcom", range_m = 150000.0, capacity_bps = 2000000, base_latency_ms = 140.0 },
+]
+[nodes.mission]
+playbook = "firefighting"
+speed_mps = 88.0
+human_authorized = true
+
+[[nodes]]
+id = "tanker-09"
+name = "Tanker UAS 09"
+kind = "air_tanker"
+affiliation = "friendly"
+domain = "air"
+mission_role = "tanker"
+position = { lat_deg = 39.2267, lon_deg = -121.0014, alt_m = 1580.0 }
+radios = [
+  { link_type = "mesh", range_m = 25000.0, capacity_bps = 8000000, base_latency_ms = 10.0 },
+  { link_type = "satcom", range_m = 150000.0, capacity_bps = 2000000, base_latency_ms = 140.0 },
+]
+[nodes.mission]
+playbook = "firefighting"
+speed_mps = 88.0
+human_authorized = true
+
+[[nodes]]
+id = "tanker-10"
+name = "Tanker UAS 10"
+kind = "air_tanker"
+affiliation = "friendly"
+domain = "air"
+mission_role = "tanker"
+position = { lat_deg = 39.2219, lon_deg = -121.0042, alt_m = 1590.0 }
+radios = [
+  { link_type = "mesh", range_m = 25000.0, capacity_bps = 8000000, base_latency_ms = 10.0 },
+  { link_type = "satcom", range_m = 150000.0, capacity_bps = 2000000, base_latency_ms = 140.0 },
+]
+[nodes.mission]
+playbook = "firefighting"
+speed_mps = 88.0
+human_authorized = true
+
+[[nodes]]
+id = "tanker-11"
+name = "Tanker UAS 11"
+kind = "air_tanker"
+affiliation = "friendly"
+domain = "air"
+mission_role = "tanker"
+position = { lat_deg = 39.2271, lon_deg = -121.0052, alt_m = 1600.0 }
+radios = [
+  { link_type = "mesh", range_m = 25000.0, capacity_bps = 8000000, base_latency_ms = 10.0 },
+  { link_type = "satcom", range_m = 150000.0, capacity_bps = 2000000, base_latency_ms = 140.0 },
+]
+[nodes.mission]
+playbook = "firefighting"
+speed_mps = 88.0
+human_authorized = true
+
+[[nodes]]
+id = "tanker-12"
+name = "Tanker UAS 12"
+kind = "air_tanker"
+affiliation = "friendly"
+domain = "air"
+mission_role = "tanker"
+position = { lat_deg = 39.2212, lon_deg = -121.0009, alt_m = 1610.0 }
+radios = [
+  { link_type = "mesh", range_m = 25000.0, capacity_bps = 8000000, base_latency_ms = 10.0 },
+  { link_type = "satcom", range_m = 150000.0, capacity_bps = 2000000, base_latency_ms = 140.0 },
+]
+[nodes.mission]
+playbook = "firefighting"
+speed_mps = 88.0
+human_authorized = true

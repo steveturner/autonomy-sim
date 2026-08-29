@@ -1,9 +1,112 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-use crate::model::{Domain, EntityKind, Position, Radio};
+use crate::{
+    model::{Affiliation, Domain, EntityKind, Position, Radio},
+    swarm::FlockingConfig,
+};
+
+const REGISTERED_SCENARIOS: &[(&str, &str, ScenarioBuilder)] = &[
+    ("isr-relay-demo", "isr-demo.toml", ScenarioBuilder::Standard),
+    ("thin-slice", "thin-slice.toml", ScenarioBuilder::Standard),
+    (
+        "wildfire-paradise",
+        "wildfire-paradise.toml",
+        ScenarioBuilder::Wildfire,
+    ),
+];
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScenarioBuilder {
+    #[default]
+    Standard,
+    Wildfire,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ScenarioDescriptor {
+    pub name: String,
+    pub description: String,
+    pub builder: ScenarioBuilder,
+}
+
+#[derive(Clone, Debug)]
+pub struct ScenarioRegistry {
+    directory: PathBuf,
+}
+
+impl Default for ScenarioRegistry {
+    fn default() -> Self {
+        Self::new("scenarios")
+    }
+}
+
+impl ScenarioRegistry {
+    pub fn new(directory: impl Into<PathBuf>) -> Self {
+        Self {
+            directory: directory.into(),
+        }
+    }
+
+    pub fn load(&self, selector: &str) -> Result<ScenarioConfig> {
+        let direct = Path::new(selector);
+        let (path, registered_builder) = if direct.exists() || selector.ends_with(".toml") {
+            (direct.to_path_buf(), None)
+        } else {
+            let (_, file, builder) = REGISTERED_SCENARIOS
+                .iter()
+                .find(|(name, _, _)| *name == selector)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "unknown scenario '{selector}'; available: {}",
+                        REGISTERED_SCENARIOS
+                            .iter()
+                            .map(|(name, _, _)| *name)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                })?;
+            (self.directory.join(file), Some(*builder))
+        };
+        let config = ScenarioConfig::from_path(&path)?;
+        if let Some(expected) = registered_builder
+            && config.scenario.builder != expected
+        {
+            bail!(
+                "scenario '{}' is registered with builder '{expected:?}' but TOML selects '{:?}'",
+                config.scenario.name,
+                config.scenario.builder
+            );
+        }
+        Ok(config)
+    }
+
+    pub fn descriptors(&self) -> Result<Vec<ScenarioDescriptor>> {
+        REGISTERED_SCENARIOS
+            .iter()
+            .map(|(registered_name, file, builder)| {
+                let config = ScenarioConfig::from_path(self.directory.join(file))?;
+                if config.scenario.name != *registered_name {
+                    bail!(
+                        "registered scenario '{registered_name}' has TOML name '{}'",
+                        config.scenario.name
+                    );
+                }
+                if config.scenario.builder != *builder {
+                    bail!("registered scenario '{registered_name}' has mismatched builder");
+                }
+                Ok(ScenarioDescriptor {
+                    name: config.scenario.name,
+                    description: config.scenario.description,
+                    builder: *builder,
+                })
+            })
+            .collect()
+    }
+}
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct ScenarioConfig {
@@ -13,6 +116,8 @@ pub struct ScenarioConfig {
     pub api: ApiConfig,
     #[serde(default)]
     pub cot: CotConfig,
+    #[serde(default)]
+    pub wildfire: Option<WildfireConfig>,
     pub nodes: Vec<NodeConfig>,
 }
 
@@ -76,7 +181,13 @@ impl ScenarioConfig {
                         node.id
                     )
                 }
-                "area_search" | "persistent_surveillance" | "comms_relay" => {}
+                "firefighting" if self.scenario.builder != ScenarioBuilder::Wildfire => {
+                    bail!(
+                        "node '{}' firefighting playbook requires wildfire builder",
+                        node.id
+                    )
+                }
+                "area_search" | "persistent_surveillance" | "comms_relay" | "firefighting" => {}
                 other => bail!("node '{}' has unknown mission playbook '{other}'", node.id),
             }
             for radio in &node.radios {
@@ -101,6 +212,16 @@ impl ScenarioConfig {
         if self.cot.stale_after_s <= 0 {
             bail!("cot.stale_after_s must be greater than zero");
         }
+        match (self.scenario.builder, &self.wildfire) {
+            (ScenarioBuilder::Wildfire, Some(wildfire)) => wildfire.validate(self, &ids)?,
+            (ScenarioBuilder::Wildfire, None) => {
+                bail!("wildfire builder requires a [wildfire] section")
+            }
+            (ScenarioBuilder::Standard, Some(_)) => {
+                bail!("[wildfire] section requires scenario.builder = 'wildfire'")
+            }
+            (ScenarioBuilder::Standard, None) => {}
+        }
         Ok(())
     }
 }
@@ -114,6 +235,8 @@ pub struct ScenarioMetadata {
     pub seed: u64,
     #[serde(default = "default_true")]
     pub realtime: bool,
+    #[serde(default)]
+    pub builder: ScenarioBuilder,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -171,12 +294,109 @@ pub struct NodeConfig {
     pub id: String,
     pub name: String,
     pub kind: EntityKind,
+    #[serde(default)]
+    pub affiliation: Affiliation,
     pub domain: Domain,
     pub position: Position,
     #[serde(default)]
     pub radios: Vec<Radio>,
     #[serde(default)]
     pub mission: MissionConfig,
+    #[serde(default)]
+    pub mission_role: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct WildfireConfig {
+    pub base_id: String,
+    pub supervisor_id: String,
+    pub reload_slots: usize,
+    pub reload_time_s: f64,
+    pub drop_duration_s: f64,
+    pub drop_effect: f64,
+    pub on_station_s: f64,
+    pub egress_time_s: f64,
+    pub launch_interval_s: f64,
+    pub arrival_radius_m: f64,
+    pub base_arrival_radius_m: f64,
+    pub approach_distance_m: f64,
+    pub base_approach_lane_deg: f64,
+    #[serde(default)]
+    pub spread_per_s: f64,
+    pub flocking: FlockingConfig,
+    pub fire_cells: Vec<FireCellConfig>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct FireCellConfig {
+    pub id: String,
+    pub name: String,
+    pub position: Position,
+    pub intensity: f64,
+}
+
+impl WildfireConfig {
+    fn validate(
+        &self,
+        scenario: &ScenarioConfig,
+        ids: &std::collections::BTreeSet<String>,
+    ) -> Result<()> {
+        if !ids.contains(&self.base_id) {
+            bail!(
+                "wildfire.base_id references unknown entity '{}'",
+                self.base_id
+            );
+        }
+        if !ids.contains(&self.supervisor_id) {
+            bail!(
+                "wildfire.supervisor_id references unknown entity '{}'",
+                self.supervisor_id
+            );
+        }
+        let base = scenario
+            .nodes
+            .iter()
+            .find(|node| node.id == self.base_id)
+            .unwrap();
+        if base.kind != EntityKind::Base {
+            bail!("wildfire.base_id must reference a kind='base' entity");
+        }
+        let tanker_count = scenario
+            .nodes
+            .iter()
+            .filter(|node| node.kind == EntityKind::AirTanker)
+            .count();
+        if !(8..=16).contains(&tanker_count) {
+            bail!("wildfire scenario requires 8-16 air_tanker nodes; found {tanker_count}");
+        }
+        if self.fire_cells.is_empty() {
+            bail!("wildfire.fire_cells must not be empty");
+        }
+        let mut cell_ids = std::collections::BTreeSet::new();
+        for cell in &self.fire_cells {
+            if !cell_ids.insert(&cell.id) || ids.contains(&cell.id) {
+                bail!("duplicate wildfire fire-cell id '{}'", cell.id);
+            }
+            if !cell.intensity.is_finite() || !(0.0..=100.0).contains(&cell.intensity) {
+                bail!("fire cell '{}' intensity must be in [0,100]", cell.id);
+            }
+        }
+        if self.reload_slots == 0
+            || self.reload_time_s <= 0.0
+            || self.drop_duration_s <= 0.0
+            || self.drop_effect <= 0.0
+            || self.arrival_radius_m <= 0.0
+            || self.base_arrival_radius_m <= 0.0
+            || self.flocking.min_speed_mps <= 0.0
+            || self.flocking.max_speed_mps < self.flocking.min_speed_mps
+            || self.flocking.max_turn_rate_deg_s <= 0.0
+            || self.flocking.neighbor_radius_m <= 0.0
+            || self.flocking.separation_radius_m <= 0.0
+        {
+            bail!("wildfire mission and flocking parameters must be positive and ordered");
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]

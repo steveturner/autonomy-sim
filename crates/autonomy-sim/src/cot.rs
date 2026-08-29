@@ -142,11 +142,17 @@ pub fn render_pli(entity: &Entity, now: DateTime<Utc>, stale_after_s: i64) -> St
 
 fn cot_type(kind: EntityKind) -> &'static str {
     match kind {
-        EntityKind::Drone => "a-f-A-M-F-Q",
+        EntityKind::Uas | EntityKind::AirTanker | EntityKind::ThreatUas => "a-f-A-M-F-Q",
+        EntityKind::Rotary => "a-f-A-M-H",
         EntityKind::Person => "a-f-G-U-C",
         EntityKind::GroundVehicle => "a-f-G-E-V",
-        EntityKind::GroundStation => "a-f-G-U-C-I",
-        EntityKind::Sensor => "a-f-G-I",
+        EntityKind::Base | EntityKind::ProtectedSite => "a-f-G-I",
+        EntityKind::Fire => "b-a-o-tbl",
+        EntityKind::Waypoint => "b-m-p-w",
+        EntityKind::RadarSensor => "a-f-G-E-S-R",
+        EntityKind::EwJammer => "a-f-G-U-S",
+        EntityKind::Interceptor => "a-f-A-M-F",
+        EntityKind::GunSystem => "a-f-G-E-W-D",
     }
 }
 
@@ -155,14 +161,24 @@ mod tests {
     use chrono::TimeZone;
 
     use super::*;
-    use crate::model::{Domain, Kinematics, MissionState, Position};
+    use crate::{
+        model::{Affiliation, Domain, Kinematics, MissionState, Position},
+        symbology::{SymbolStatus, icon_hint, sidc},
+    };
 
     #[test]
     fn pli_is_well_formed_and_escapes_callsign() {
         let entity = Entity {
             id: "uav-alpha".into(),
             name: "Alpha & One".into(),
-            kind: EntityKind::Drone,
+            kind: EntityKind::Uas,
+            affiliation: Affiliation::Friendly,
+            sidc: sidc(
+                EntityKind::Uas,
+                Affiliation::Friendly,
+                SymbolStatus::Present,
+            ),
+            icon_hint: icon_hint(EntityKind::Uas).into(),
             domain: Domain::Air,
             position: Position {
                 lat_deg: 34.0,
@@ -175,6 +191,11 @@ mod tests {
                 vertical_speed_mps: 0.0,
             },
             mission: MissionState::default(),
+            mission_role: "scout".into(),
+            mission_state: "holding".into(),
+            heading_deg: 0.0,
+            retardant_pct: None,
+            intensity: None,
             radios: Vec::new(),
         };
         let now = Utc.with_ymd_and_hms(2026, 8, 28, 12, 0, 0).unwrap();

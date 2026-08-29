@@ -16,6 +16,7 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 use crate::{
     Simulation,
+    scenario::ScenarioDescriptor,
     wire::{HelloEnvelope, HelloPayload, SCHEMA, StateEnvelope},
 };
 
@@ -24,9 +25,14 @@ pub struct AppState {
     latest: Arc<RwLock<StateEnvelope>>,
     updates: broadcast::Sender<String>,
     hello: HelloEnvelope,
+    scenarios: Arc<Vec<ScenarioDescriptor>>,
 }
 
-pub async fn run(mut simulation: Simulation, bind: SocketAddr) -> Result<()> {
+pub async fn run(
+    mut simulation: Simulation,
+    bind: SocketAddr,
+    scenarios: Vec<ScenarioDescriptor>,
+) -> Result<()> {
     let initial = simulation.snapshot()?;
     let tick_hz = simulation.tick_hz();
     let hello = HelloEnvelope {
@@ -45,6 +51,7 @@ pub async fn run(mut simulation: Simulation, bind: SocketAddr) -> Result<()> {
         latest: Arc::new(RwLock::new(initial)),
         updates,
         hello,
+        scenarios: Arc::new(scenarios),
     };
 
     let producer_state = state.clone();
@@ -75,6 +82,7 @@ pub async fn run(mut simulation: Simulation, bind: SocketAddr) -> Result<()> {
     let app = Router::new()
         .route("/healthz", get(health))
         .route("/api/v1/snapshot", get(snapshot))
+        .route("/api/v1/scenarios", get(list_scenarios))
         .route("/api/v1/stream", get(stream))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
@@ -92,6 +100,10 @@ async fn health() -> Json<serde_json::Value> {
 
 async fn snapshot(State(state): State<AppState>) -> Json<StateEnvelope> {
     Json(state.latest.read().await.clone())
+}
+
+async fn list_scenarios(State(state): State<AppState>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "scenarios": state.scenarios.as_ref() }))
 }
 
 async fn stream(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
