@@ -81,6 +81,7 @@ fn wildfire_stream_contract_and_mission_cycle_run_end_to_end() {
     let mut observed_states = BTreeSet::new();
     let mut observed_collections = BTreeSet::new();
     let mut observed_queue = false;
+    let mut observed_mission_convergence = false;
     let mut final_intensity = initial_intensity;
 
     for _ in 0..1_500 {
@@ -100,6 +101,14 @@ fn wildfire_stream_contract_and_mission_cycle_run_end_to_end() {
                 .iter()
                 .map(|document| document.collection.clone()),
         );
+        let mission_documents: Vec<_> = frame
+            .payload
+            .ditto_documents
+            .iter()
+            .filter(|document| document.collection.starts_with("mission."))
+            .collect();
+        observed_mission_convergence |= !mission_documents.is_empty()
+            && mission_documents.iter().all(|document| document.converged);
         observed_queue |= frame.payload.base.as_ref().is_some_and(|base| {
             !base.queue.is_empty() || base.occupied_slots.len() == base.reload_slots
         });
@@ -109,7 +118,11 @@ fn wildfire_stream_contract_and_mission_cycle_run_end_to_end() {
             .iter()
             .map(|cell| cell.intensity)
             .sum();
-        if observed_states.len() == 7 && observed_queue && final_intensity < initial_intensity {
+        if observed_states.len() == 7
+            && observed_queue
+            && final_intensity < initial_intensity
+            && observed_mission_convergence
+        {
             break;
         }
     }
@@ -134,4 +147,8 @@ fn wildfire_stream_contract_and_mission_cycle_run_end_to_end() {
     assert!(observed_collections.contains(FIRE_CELLS_COLLECTION));
     assert!(observed_collections.contains(BASE_QUEUE_COLLECTION));
     assert!(observed_collections.contains(DROP_ASSIGNMENTS_COLLECTION));
+    assert!(
+        observed_mission_convergence,
+        "expected stable wildfire coordination documents to converge"
+    );
 }
