@@ -1,6 +1,8 @@
-.PHONY: setup live demo wildfire wildfire-live frontend check clean-output
+.PHONY: setup live demo wildfire wildfire-live frontend check build-dittoffi test-ditto-real demo-ditto-real clean-output
 
 HOST ?= 127.0.0.1
+DITTO_SOURCE_DIR ?=
+DITTO_BUILD_TARGET_DIR ?= $(CURDIR)/target/dittoffi
 
 setup:
 	npm --prefix frontend install
@@ -31,6 +33,18 @@ check:
 	cargo clippy --workspace --all-targets -- -D warnings
 	cargo test --workspace
 	npm --prefix frontend run build
+
+build-dittoffi:
+	@test -n "$(DITTO_SOURCE_DIR)" || { echo "set DITTO_SOURCE_DIR to a Ditto source checkout"; exit 2; }
+	CARGO_TARGET_DIR="$(DITTO_BUILD_TARGET_DIR)" cargo build --locked --manifest-path "$(DITTO_SOURCE_DIR)/Cargo.toml" -p dittoffi --release --no-default-features --features explicit-fs-storage
+
+test-ditto-real: build-dittoffi
+	@test -n "$${DITTO_LICENSE:-}" || { echo "set DITTO_LICENSE to an offline Ditto license"; exit 2; }
+	env -u NO_COLOR DITTO_SOURCE_DIR="$(DITTO_SOURCE_DIR)" DITTOFFI_LIB_DIR="$(DITTO_BUILD_TARGET_DIR)/release/deps" RUST_LOG="$${RUST_LOG:-warn}" cargo test -p autonomy-sim-ditto-real --features dittoffi --test real_peers
+
+demo-ditto-real: build-dittoffi
+	@test -n "$${DITTO_LICENSE:-}" || { echo "set DITTO_LICENSE to an offline Ditto license"; exit 2; }
+	env -u NO_COLOR DITTO_SOURCE_DIR="$(DITTO_SOURCE_DIR)" DITTOFFI_LIB_DIR="$(DITTO_BUILD_TARGET_DIR)/release/deps" RUST_LOG="$${RUST_LOG:-warn}" cargo run -p autonomy-sim-ditto-real --features dittoffi --bin autonomy-sim-ditto-real-demo
 
 clean-output:
 	find output -type f -name '*.cot' -delete 2>/dev/null || true
