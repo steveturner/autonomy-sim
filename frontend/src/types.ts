@@ -92,18 +92,17 @@ export interface DittoReplicationEvent {
   to_peer_id: string; link_id: string; replicated_at_s: number;
 }
 export interface StateEnvelope {
-  schema: 'autonomy-sim/v1'; message_type: 'state'; sequence: number; sim_time_s: number;
+  schema: 'autonomy-sim/v1'; message_type: 'state'; scenario: string; sequence: number; sim_time_s: number;
   payload: {
     entities: EntityState[]; links: LinkState[]; link_events: LinkEvent[]; traffic: TrafficState[];
     ditto_peers: DittoPeerState[]; ditto_documents: DittoDocumentState[];
     ditto_replication_events: DittoReplicationEvent[]; czml: unknown[];
-    effects?: EntityEffectState[];
     fire_cells?: FireCellState[];
     base?: BaseState | null;
   };
 }
 export interface HelloEnvelope {
-  schema: 'autonomy-sim/v1'; message_type: 'hello'; sequence: 0; sim_time_s: 0;
+  schema: 'autonomy-sim/v1'; message_type: 'hello'; scenario: string; sequence: 0; sim_time_s: 0;
   payload: { scenario: string; tick_hz: number; server: string };
 }
 

@@ -119,7 +119,9 @@ let reconnectTimer = 0;
 let socket: WebSocket | null = null;
 let connectionGeneration = 0;
 let lastSequence = -1;
+let lastSimTime = -1;
 let selectedScenario: ScenarioSummary | null = null;
+let observedScenarioId: string | null = null;
 let scenarios: ScenarioSummary[] = [];
 
 const linkColors: Record<LinkType, any> = {
@@ -342,7 +344,6 @@ function isActive(entity: EntityState, effect?: EntityEffectState): boolean {
 
 function collectEffectSpecs(
   entities: EntityState[],
-  wireEffects: EntityEffectState[],
   fireCells: FireCellState[],
   base: BaseState | null,
 ): EffectVisualSpec[] {
@@ -442,56 +443,16 @@ function collectEffectSpecs(
     }
   }
 
-  wireEffects.forEach((effect, index) => {
-    if (effect.active === false) return;
-    const position = positionFor(effect.source_entity_id, effect.position);
-    if (!position) return;
-    const key = effect.id || `${effect.kind}/${effect.source_entity_id || index}`;
-    if (effectMatches(effect, ['fire'])) {
-      const intensity = normalizedIntensity(effect.intensity);
-      specs.push({
-        id: `effect/wire/${key}`,
-        visualKind: 'area',
-        name: effect.kind.toUpperCase(),
-        position,
-        radiusM: effect.radius_m ?? 70 + intensity * 280,
-        pointSize: 16 + intensity * 24,
-        color: Cesium.Color.lerp(Cesium.Color.YELLOW, Cesium.Color.RED, intensity, new Cesium.Color()),
-      });
-    } else if (effectMatches(effect, ['jam', 'electronic_warfare', 'ew_'])) {
-      specs.push({
-        id: `effect/wire/${key}`,
-        visualKind: 'ring',
-        name: effect.kind.toUpperCase(),
-        position,
-        radiusM: effect.radius_m ?? 850,
-        color: Cesium.Color.fromCssColorString('#c084fc'),
-      });
-    } else if (effectMatches(effect, ['engage', 'intercept', 'gun'])) {
-      const target = positionFor(effect.target_entity_id);
-      specs.push({
-        id: `effect/wire/${key}`,
-        visualKind: target ? 'line' : 'ring',
-        name: effect.kind.toUpperCase(),
-        position,
-        target,
-        radiusM: effect.radius_m ?? 180,
-        color: Cesium.Color.fromCssColorString('#fb923c'),
-      });
-    }
-  });
-
   return specs;
 }
 
 function updateEffects(
   entities: EntityState[],
-  wireEffects: EntityEffectState[] = [],
   fireCells: FireCellState[] = [],
   base: BaseState | null = null,
 ): void {
   const active = new Set<string>();
-  for (const spec of collectEffectSpecs(entities, wireEffects, fireCells, base)) {
+  for (const spec of collectEffectSpecs(entities, fireCells, base)) {
     active.add(spec.id);
     updateEffectOverlay(spec);
     const position = Cesium.Cartesian3.fromDegrees(
@@ -811,6 +772,8 @@ function clearDynamicVisuals(): void {
   byId<HTMLOListElement>('eventLog').innerHTML = '<li class="muted">No transitions yet</li>';
   hasFramed = false;
   lastSequence = -1;
+  lastSimTime = -1;
+  observedScenarioId = null;
 }
 
 function setScenarioHeading(scenarioId: string): void {
@@ -825,18 +788,30 @@ function setScenarioHeading(scenarioId: string): void {
   }
 }
 
+function reconcileScenario(scenarioId: string): void {
+  if (observedScenarioId && observedScenarioId !== scenarioId) clearDynamicVisuals();
+  observedScenarioId = scenarioId;
+  setScenarioHeading(scenarioId);
+}
+
 function handleMessage(value: HelloEnvelope | StateEnvelope): void {
   if (value.schema !== 'autonomy-sim/v1') return;
+  reconcileScenario(value.scenario);
   if (value.message_type === 'hello') {
-    setScenarioHeading(value.payload.scenario);
     return;
   }
-  if (value.sequence <= lastSequence) return;
+  if (value.sequence <= lastSequence) {
+    if (value.sim_time_s >= lastSimTime) return;
+    const scenarioId = value.scenario;
+    clearDynamicVisuals();
+    observedScenarioId = scenarioId;
+    setScenarioHeading(scenarioId);
+  }
   lastSequence = value.sequence;
+  lastSimTime = value.sim_time_s;
   updateEntities(value.payload.entities);
   updateEffects(
     value.payload.entities,
-    value.payload.effects,
     value.payload.fire_cells,
     value.payload.base,
   );
@@ -864,6 +839,7 @@ function connect(): void {
   indicator.className = 'connection pending';
   indicator.innerHTML = '<span></span>CONNECTING';
   lastSequence = -1;
+  lastSimTime = -1;
   socket = new WebSocket(url);
   socket.onopen = () => {
     if (generation !== connectionGeneration) return;
