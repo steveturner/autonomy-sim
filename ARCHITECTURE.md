@@ -28,7 +28,7 @@ Ditto peer + document replication model
 
 ### Entity and agent layer
 
-An `Entity` has a stable string ID, display name, kind (`drone`, `person`, `ground_vehicle`, `ground_station`, or `sensor`), domain (`ground`, `air`, `maritime`, or `space`), WGS84 position, velocity, heading, configured radios, and mission state. Every entity is also exactly one Ditto peer with stable ID `ditto/<entity-id>`; there is no separate centralized messaging node. A fixed-step scheduler owns simulation time. Every tick is ordered: tick behavior trees, integrate kinematics, evaluate peer links, update local Ditto documents, replicate documents over available links, update convergence, export gateway-visible documents to CoT, and publish a state frame. Scenario seed and tick size make analytic runs reproducible.
+An `Entity` has a stable string ID, display name, kind, affiliation, MIL-STD-2525C SIDC, domain (`ground`, `air`, `maritime`, or `space`), WGS84 position, velocity, heading, configured radios, mission role, and mission state. Active platform/site entities are Ditto peers with stable ID `ditto/<entity-id>`; environmental `fire` and navigation `waypoint` entities are document subjects rather than radio peers. There is no separate centralized messaging node. A fixed-step scheduler owns simulation time. Every tick is ordered: tick behavior trees or the wildfire mission FSM, integrate kinematics, update the fire model, evaluate peer links, update local Ditto documents, replicate documents over available links, update convergence, export gateway-visible documents to CoT, and publish a state frame. Scenario seed and tick size make analytic runs reproducible.
 
 ### Behavior-tree and mission layer
 
@@ -37,6 +37,7 @@ Behavior trees use `Sequence`, `Fallback`, and `Parallel` composites with explic
 - `area_search`: traverse a declared waypoint coverage route.
 - `persistent_surveillance`: transit to and loiter around an ISR point.
 - `comms_relay`: move toward the midpoint of disconnected peers and hold when connectivity is restored.
+- `firefighting`: run the Rust tanker FSM `holding → enroute_to_fire → on_station → dropping → egress → enroute_to_base → reloading → holding`. Flocking combines separation, alignment, cohesion, and goal steering under configured neighbor, speed, and turn-rate limits. The Grass Valley base limits concurrent reload slots; a drop reduces the assigned Paradise fire cell's intensity.
 
 The tree is an execution structure, not an optimizer. Later playbook selection can use MAP-Elites, but candidate generation cannot relax safety constraints or human authority.
 
@@ -50,7 +51,7 @@ The `SigForgeBackend` Phase 1 stub implements the same trait but returns a clear
 
 ### Ditto peer and document layer
 
-Ditto is the primary inter-node communication model. C2 tasking, PLI, tracks, and platform telemetry live in the collections `c2.tasking`, `c2.pli`, `c2.tracks`, and `telemetry.platform`. Each peer updates its locally authored documents, discovers reachable peers from current `NetworkBackend` links, and exchanges newer document revisions within link quality/capacity budgets. When two peers have several carriers up, Phase 1 moves document revisions over the highest-quality carrier and accounts for discovery/keepalive overhead on the others. Replicas remain available while disconnected and eventually converge when a path returns; no central broker is required.
+Ditto is the primary inter-node communication model. C2 tasking, PLI, tracks, and platform telemetry live in the collections `c2.tasking`, `c2.pli`, `c2.tracks`, and `telemetry.platform`. Wildfire coordination adds `mission.fire_cells`, `mission.base_queue`, and `mission.drop_assignments`; document `value` carries the fire cell, slot/queue, and tanker claim/completion state described below. The AAB supervisor authors fire-cell and base-queue documents, while each tanker authors its drop-assignment document. Each peer updates its locally authored documents, discovers reachable peers from current `NetworkBackend` links, and exchanges newer document revisions within link quality/capacity budgets. When two peers have several carriers up, Phase 1 moves document revisions over the highest-quality carrier and accounts for discovery/keepalive overhead on the others. Replicas remain available while disconnected and eventually converge when a path returns; no central broker is required.
 
 Phase 1 models CRDT behavior at the document/revision level: peer discovery, replica watermarks, bounded per-link propagation, pending-document counts, and convergence state. It intentionally does not embed `dittoffi`. Phase 2+ will replace this behavioral model with real Ditto small peers whose transports run through SigForge/CORE-EMANE, following the `ditto-barrage-*` scale-test pattern. The wire contract remains the observation boundary for both implementations.
 
@@ -70,9 +71,35 @@ The public interface is `autonomy-sim/v1`. Additive fields may appear without a 
 
 - WebSocket: `GET /api/v1/stream`. The server sends one `hello`, immediately sends the latest `state`, then sends a `state` after every simulation tick. Text frames contain one UTF-8 JSON object. Client messages are not required in Phase 1; unsupported messages are ignored.
 - REST snapshot: `GET /api/v1/snapshot` returns the exact latest `state` envelope.
+- Scenario registry: `GET /api/v1/scenarios` returns the exact selection contract below. `id` is the stable slug used by the CLI, REST API, WebSocket API, and envelopes; `name` is display text. `entity_count` counts configured platform/site nodes and excludes generated environmental fire-cell entities.
+- Selection query: `GET /api/v1/snapshot?scenario=<id>` and `GET /api/v1/stream?scenario=<id>` select that registered scenario before returning/upgrading. Omitting `scenario` uses the current active/default scenario.
+- Explicit selection: `POST /api/v1/scenario` with `{"id":"<id>"}` returns `{"active":"<id>"}`.
 - Health: `GET /healthz` returns `{"status":"ok"}`.
-- Ordering: `sequence` increases by one per state frame in a server process. A reconnect starts with a new `hello`; clients replace their complete local view with every `state.payload` and may discard sequence numbers less than or equal to the last applied value.
+- Single-active prototype: the process runs exactly one simulation. A query or POST selecting another scenario replaces the running simulation for every client, publishes its initial state immediately, and resets `sequence` and `sim_time_s` to zero. Clients use the envelope `scenario` field to detect the change before applying per-scenario sequence ordering.
+- Ordering: within one active scenario run, `sequence` increases by one per state frame. A reconnect starts with a new `hello`; clients replace their complete local view with every `state.payload` and may discard sequence numbers less than or equal to the last applied value for the same `scenario`.
 - Time: `sim_time_s` is simulation seconds from scenario start, not wall time. CoT carries UTC wall time because TAK consumers require it.
+
+```json
+{
+  "active": "isr-relay-demo",
+  "scenarios": [
+    {
+      "id": "isr-relay-demo",
+      "name": "ISR Relay Demo",
+      "description": "Two ISR drones, a mobile relay, two people, and a C2 node with flapping Ditto links",
+      "entity_count": 6,
+      "default": true
+    },
+    {
+      "id": "wildfire-paradise",
+      "name": "Wildfire - Paradise",
+      "description": "Twelve UAS air tankers coordinate fire-suppression drops between Grass Valley AAB and Paradise",
+      "entity_count": 14,
+      "default": false
+    }
+  ]
+}
+```
 
 ### Envelope union
 
@@ -80,6 +107,7 @@ The public interface is `autonomy-sim/v1`. Additive fields may appear without a 
 {
   "schema": "autonomy-sim/v1",
   "message_type": "hello",
+  "scenario": "isr-relay-demo",
   "sequence": 0,
   "sim_time_s": 0.0,
   "payload": {
@@ -94,6 +122,7 @@ The public interface is `autonomy-sim/v1`. Additive fields may appear without a 
 {
   "schema": "autonomy-sim/v1",
   "message_type": "state",
+  "scenario": "isr-relay-demo",
   "sequence": 42,
   "sim_time_s": 8.4,
   "payload": {
@@ -104,6 +133,8 @@ The public interface is `autonomy-sim/v1`. Additive fields may appear without a 
     "ditto_peers": [],
     "ditto_documents": [],
     "ditto_replication_events": [],
+    "fire_cells": [],
+    "base": null,
     "czml": []
   }
 }
@@ -117,10 +148,16 @@ All angles are degrees, altitude is WGS84 meters, and speed is meters per second
 {
   "id": "uav-alpha",
   "name": "UAV Alpha",
-  "kind": "drone",
+  "kind": "uas",
+  "affiliation": "friendly",
+  "sidc": "SFAPMFQ--------",
+  "icon_hint": "fixed_wing_uas",
   "domain": "air",
   "position": { "lat_deg": 34.0501, "lon_deg": -117.2502, "alt_m": 180.0 },
   "kinematics": { "speed_mps": 14.0, "heading_deg": 91.5, "vertical_speed_mps": 0.0 },
+  "mission_role": "scout",
+  "mission_state": "coverage_waypoint_2",
+  "heading_deg": 91.5,
   "mission": {
     "playbook": "persistent_surveillance",
     "active_node": "loiter",
@@ -129,7 +166,44 @@ All angles are degrees, altitude is WGS84 meters, and speed is meters per second
 }
 ```
 
-`kind` is one of `drone`, `person`, `ground_vehicle`, `ground_station`, `sensor`. `domain` is one of `ground`, `air`, `maritime`, `space`. Mission `status` is `running`, `success`, or `failure`.
+The canonical entity fields and enum spellings are:
+
+- `kind`: `uas`, `air_tanker`, `rotary`, `person`, `ground_vehicle`, `base`, `fire`, `waypoint`, `threat_uas`, `radar_sensor`, `ew_jammer`, `interceptor`, `gun_system`, or `protected_site`.
+- `affiliation`: `friendly`, `hostile`, `neutral`, or `unknown`. Position 2 of `sidc` encodes the same affiliation (`F`, `H`, `N`, or `U`), producing the standard blue friendly frame and red hostile frame in a 2525C renderer.
+- `sidc`: exactly 15 ASCII characters, using the MIL-STD-2525C SIDC layout. Important mappings include fixed-wing UAV/air tanker/threat UAV `MFQ---`, rotary wing `MH----`, interceptor `MFFI--`, radar `ESR---`, utility ground vehicle `EVU---`, military base `IB----` with the installation modifier, and Emergency Management wild-fire incident `CH----`.
+- `icon_hint`: stable renderer fallback string; the SIDC remains authoritative.
+- `mission_role`: free string such as `tanker`, `leadplane`, `scout`, `relay`, or `air_attack_base`.
+- `mission_state`: current leaf/FSM string. Wildfire tanker values are exactly `holding`, `enroute_to_fire`, `on_station`, `dropping`, `egress`, `enroute_to_base`, or `reloading`.
+- `heading_deg`: canonical top-level heading in degrees clockwise from true north. It mirrors `kinematics.heading_deg`; both remain in v1 for compatibility.
+- `retardant_pct`: optional number in `[0,100]`, present on air tankers and absent on other kinds.
+- `intensity`: optional number in `[0,100]`, present on `fire` entities and absent on other kinds.
+- `domain`: `ground`, `air`, `maritime`, or `space`. Nested mission `status` remains `running`, `success`, or `failure`.
+
+### Wildfire fire cells and base
+
+`payload.fire_cells` and `payload.base` are canonical mission-level projections. Standard/non-wildfire scenarios send `fire_cells: []` and `base: null`. Fire cells also appear in `entities` with `kind: "fire"`, the same `id`, position, and `intensity`; the mission projection carries assignment status without forcing clients to join Ditto documents.
+
+```json
+{
+  "fire_cells": [{
+    "id": "paradise-fire-01",
+    "position": { "lat_deg": 39.7596, "lon_deg": -121.6219, "alt_m": 532.0 },
+    "intensity": 62.4,
+    "assigned_tanker": "tanker-03",
+    "status": "dropping"
+  }],
+  "base": {
+    "id": "grass-valley-aab",
+    "name": "Grass Valley Air Attack Base",
+    "position": { "lat_deg": 39.2244, "lon_deg": -121.0030, "alt_m": 1017.0 },
+    "reload_slots": 3,
+    "occupied_slots": ["tanker-01", "tanker-04"],
+    "queue": ["tanker-07"]
+  }
+}
+```
+
+Fire-cell `status` is `available`, `assigned`, `dropping`, or `contained`. `assigned_tanker` is a tanker entity ID or `null`. `occupied_slots` and `queue` contain tanker entity IDs; queue order is FIFO.
 
 ### Link state and transitions
 
@@ -154,7 +228,7 @@ Every configured compatible radio pair is present in `links`, including down lin
 
 ### Ditto peer state
 
-`ditto_peers` contains one record per entity. `connected_peer_ids` is derived from all current up links, regardless of carrier. `document_count` counts locally present latest-or-stale replicas; `pending_documents` counts known global revisions not yet at that peer. `converged` is true when the peer holds the latest revision of every document currently known to the simulation.
+`ditto_peers` contains one record per active platform/site entity; environmental `fire` and navigation `waypoint` entities do not create peers. `connected_peer_ids` is derived from all current up links, regardless of carrier. `document_count` counts locally present latest-or-stale replicas; `pending_documents` counts known global revisions not yet at that peer. `converged` is true when the peer holds the latest revision of every document currently known to the simulation.
 
 ```json
 {
@@ -184,6 +258,7 @@ Every configured compatible radio pair is present in `links`, including down lin
   "author_peer_id": "ditto/uav-alpha",
   "revision": 9,
   "updated_at_s": 8.0,
+  "value": { "entity_id": "uav-alpha", "heading_deg": 91.5 },
   "replicated_to": ["ditto/relay-one", "ditto/uav-alpha"],
   "converged": false
 }
@@ -246,11 +321,21 @@ Traffic is a per-up-link aggregate for the current tick. In Phase 1 it is comput
   "properties": {
     "entity_id": "uav-alpha",
     "ditto_peer_id": "ditto/uav-alpha",
-    "kind": "drone",
-    "domain": "air"
+    "kind": "uas",
+    "affiliation": "friendly",
+    "sidc": "SFAPMFQ--------",
+    "icon_hint": "fixed_wing_uas",
+    "domain": "air",
+    "mission_role": "scout",
+    "mission_state": "coverage_waypoint_2",
+    "heading_deg": 91.5,
+    "retardant_pct": null,
+    "intensity": null
   }
 }
 ```
+
+For environmental `fire` and navigation `waypoint` packets, `ditto_peer_id` is `null`; their state is coordinated as documents rather than modeled as a radio peer.
 
 ## Architectural references
 

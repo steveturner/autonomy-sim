@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Serialize;
 
 use crate::{
-    model::Entity,
+    model::{Entity, EntityKind},
     network::{LinkState, LinkStatus},
 };
 
@@ -11,6 +11,9 @@ pub const TASKING_COLLECTION: &str = "c2.tasking";
 pub const PLI_COLLECTION: &str = "c2.pli";
 pub const TRACKS_COLLECTION: &str = "c2.tracks";
 pub const TELEMETRY_COLLECTION: &str = "telemetry.platform";
+pub const FIRE_CELLS_COLLECTION: &str = "mission.fire_cells";
+pub const BASE_QUEUE_COLLECTION: &str = "mission.base_queue";
+pub const DROP_ASSIGNMENTS_COLLECTION: &str = "mission.drop_assignments";
 
 pub fn peer_id(entity_id: &str) -> String {
     format!("ditto/{entity_id}")
@@ -34,6 +37,7 @@ pub struct DittoDocumentState {
     pub author_peer_id: String,
     pub revision: u64,
     pub updated_at_s: f64,
+    pub value: serde_json::Value,
     pub replicated_to: Vec<String>,
     pub converged: bool,
 }
@@ -65,6 +69,7 @@ struct DocumentReplica {
     author_peer_id: String,
     revision: u64,
     updated_at_s: f64,
+    value: serde_json::Value,
     peer_revisions: BTreeMap<String, u64>,
 }
 
@@ -83,6 +88,7 @@ impl DittoModel {
     ) -> Self {
         let entity_to_peer: BTreeMap<_, _> = entities
             .iter()
+            .filter(|entity| !matches!(entity.kind, EntityKind::Fire | EntityKind::Waypoint))
             .map(|entity| (entity.id.clone(), peer_id(&entity.id)))
             .collect();
         let peer_revisions = entity_to_peer.values().cloned().map(|id| (id, 0)).collect();
@@ -94,6 +100,7 @@ impl DittoModel {
             author_peer_id: gateway_peer_id.clone(),
             revision: 1,
             updated_at_s: 0.0,
+            value: serde_json::json!({ "scenario": scenario_name, "status": "authorized" }),
             peer_revisions,
         };
         task.peer_revisions.insert(gateway_peer_id, 1);
@@ -113,23 +120,42 @@ impl DittoModel {
     ) -> DittoFrame {
         if sequence == 1 || sequence.is_multiple_of(self.update_interval_ticks) {
             for entity in entities {
-                let author = peer_id(&entity.id);
-                self.update_authored(
+                if !self.entity_to_peer.contains_key(&entity.id) {
+                    continue;
+                }
+                self.upsert_document(
                     PLI_COLLECTION,
                     &format!("pli/{}", entity.id),
-                    &author,
+                    &entity.id,
+                    serde_json::json!({
+                        "entity_id": entity.id,
+                        "position": entity.position,
+                        "heading_deg": entity.heading_deg,
+                    }),
                     sim_time_s,
                 );
-                self.update_authored(
+                self.upsert_document(
                     TRACKS_COLLECTION,
                     &format!("track/{}", entity.id),
-                    &author,
+                    &entity.id,
+                    serde_json::json!({
+                        "entity_id": entity.id,
+                        "kind": entity.kind,
+                        "affiliation": entity.affiliation,
+                        "sidc": entity.sidc,
+                    }),
                     sim_time_s,
                 );
-                self.update_authored(
+                self.upsert_document(
                     TELEMETRY_COLLECTION,
                     &format!("telemetry/{}", entity.id),
-                    &author,
+                    &entity.id,
+                    serde_json::json!({
+                        "mission_role": entity.mission_role,
+                        "mission_state": entity.mission_state,
+                        "retardant_pct": entity.retardant_pct,
+                        "intensity": entity.intensity,
+                    }),
                     sim_time_s,
                 );
             }
@@ -201,6 +227,7 @@ impl DittoModel {
                     author_peer_id: document.author_peer_id.clone(),
                     revision: document.revision,
                     updated_at_s: document.updated_at_s,
+                    value: document.value.clone(),
                     converged: replicated_to.len() == peer_count,
                     replicated_to,
                 }
@@ -278,13 +305,15 @@ impl DittoModel {
             })
     }
 
-    fn update_authored(
+    pub fn upsert_document(
         &mut self,
         collection: &str,
         document_id: &str,
-        author_peer_id: &str,
+        author_entity_id: &str,
+        value: serde_json::Value,
         sim_time_s: f64,
     ) {
+        let author_peer_id = peer_id(author_entity_id);
         let peer_ids: Vec<_> = self.entity_to_peer.values().cloned().collect();
         let document = self
             .documents
@@ -292,16 +321,21 @@ impl DittoModel {
             .or_insert_with(|| DocumentReplica {
                 collection: collection.into(),
                 document_id: document_id.into(),
-                author_peer_id: author_peer_id.into(),
+                author_peer_id: author_peer_id.clone(),
                 revision: 0,
                 updated_at_s: sim_time_s,
+                value: serde_json::Value::Null,
                 peer_revisions: peer_ids.into_iter().map(|peer| (peer, 0)).collect(),
             });
+        if document.value == value {
+            return;
+        }
         document.revision += 1;
         document.updated_at_s = sim_time_s;
+        document.value = value;
         document
             .peer_revisions
-            .insert(author_peer_id.into(), document.revision);
+            .insert(author_peer_id, document.revision);
     }
 }
 
@@ -344,17 +378,32 @@ fn connected_peers(links: &[LinkState]) -> BTreeMap<String, Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Domain, EntityKind, Kinematics, LinkType, MissionState, Position};
+    use crate::{
+        model::{Affiliation, Domain, EntityKind, Kinematics, LinkType, MissionState, Position},
+        symbology::{SymbolStatus, icon_hint, sidc},
+    };
 
     fn entity(id: &str) -> Entity {
         Entity {
             id: id.into(),
             name: id.into(),
-            kind: EntityKind::Drone,
+            kind: EntityKind::Uas,
+            affiliation: Affiliation::Friendly,
+            sidc: sidc(
+                EntityKind::Uas,
+                Affiliation::Friendly,
+                SymbolStatus::Present,
+            ),
+            icon_hint: icon_hint(EntityKind::Uas).into(),
             domain: Domain::Air,
             position: Position::default(),
             kinematics: Kinematics::default(),
             mission: MissionState::default(),
+            mission_role: "scout".into(),
+            mission_state: "holding".into(),
+            heading_deg: 0.0,
+            retardant_pct: None,
+            intensity: None,
             radios: Vec::new(),
         }
     }

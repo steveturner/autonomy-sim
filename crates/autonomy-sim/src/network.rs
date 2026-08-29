@@ -359,13 +359,23 @@ fn stable_hash(value: &str) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Domain, EntityKind, Kinematics, MissionState};
+    use crate::{
+        model::{Affiliation, Domain, EntityKind, Kinematics, MissionState},
+        symbology::{SymbolStatus, icon_hint, sidc},
+    };
 
     fn entity(id: &str, lon: f64) -> Entity {
         Entity {
             id: id.into(),
             name: id.into(),
-            kind: EntityKind::Drone,
+            kind: EntityKind::Uas,
+            affiliation: Affiliation::Friendly,
+            sidc: sidc(
+                EntityKind::Uas,
+                Affiliation::Friendly,
+                SymbolStatus::Present,
+            ),
+            icon_hint: icon_hint(EntityKind::Uas).into(),
             domain: Domain::Air,
             position: Position {
                 lat_deg: 34.0,
@@ -374,6 +384,11 @@ mod tests {
             },
             kinematics: Kinematics::default(),
             mission: MissionState::default(),
+            mission_role: "scout".into(),
+            mission_state: "holding".into(),
+            heading_deg: 0.0,
+            retardant_pct: None,
+            intensity: None,
             radios: vec![Radio {
                 link_type: LinkType::Mesh,
                 range_m: 1_000.0,

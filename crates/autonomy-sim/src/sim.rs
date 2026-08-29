@@ -13,6 +13,8 @@ use crate::{
         ditto_traffic,
     },
     scenario::{MissionConfig, ScenarioConfig},
+    symbology::{SymbolStatus, icon_hint, sidc},
+    wildfire::WildfireRuntime,
     wire::{SCHEMA, StateEnvelope, StatePayload, entity_czml, link_czml},
 };
 
@@ -35,11 +37,12 @@ pub struct Simulation {
     cot_sink: Box<dyn CotSink>,
     cot_interval_ticks: u64,
     cot_stale_after_s: i64,
+    wildfire: Option<WildfireRuntime>,
 }
 
 impl Simulation {
     pub fn try_new(config: &ScenarioConfig) -> Result<Self> {
-        let agents: Vec<_> = config
+        let mut agents: Vec<_> = config
             .nodes
             .iter()
             .map(|node| Agent {
@@ -47,6 +50,9 @@ impl Simulation {
                     id: node.id.clone(),
                     name: node.name.clone(),
                     kind: node.kind,
+                    affiliation: node.affiliation,
+                    sidc: sidc(node.kind, node.affiliation, SymbolStatus::Present),
+                    icon_hint: icon_hint(node.kind).into(),
                     domain: node.domain,
                     position: node.position,
                     kinematics: Kinematics {
@@ -58,12 +64,53 @@ impl Simulation {
                         active_node: "initialize".into(),
                         status: MissionStatus::Running,
                     },
+                    mission_role: if node.mission_role.is_empty() {
+                        default_mission_role(node.kind).into()
+                    } else {
+                        node.mission_role.clone()
+                    },
+                    mission_state: "holding".into(),
+                    heading_deg: 0.0,
+                    retardant_pct: None,
+                    intensity: None,
                     radios: node.radios.clone(),
                 },
                 mission: node.mission.clone(),
                 behavior: BehaviorRuntime::for_playbook(&node.mission.playbook),
             })
             .collect();
+        if let Some(wildfire) = &config.wildfire {
+            agents.extend(wildfire.fire_cells.iter().map(|cell| Agent {
+                entity: Entity {
+                    id: cell.id.clone(),
+                    name: cell.name.clone(),
+                    kind: EntityKind::Fire,
+                    affiliation: crate::model::Affiliation::Friendly,
+                    sidc: sidc(
+                        EntityKind::Fire,
+                        crate::model::Affiliation::Friendly,
+                        SymbolStatus::Present,
+                    ),
+                    icon_hint: icon_hint(EntityKind::Fire).into(),
+                    domain: crate::model::Domain::Ground,
+                    position: cell.position,
+                    kinematics: Kinematics::default(),
+                    mission: MissionState {
+                        playbook: "fire_model".into(),
+                        active_node: "fire_model".into(),
+                        status: MissionStatus::Running,
+                    },
+                    mission_role: "fire_cell".into(),
+                    mission_state: "available".into(),
+                    heading_deg: 0.0,
+                    retardant_pct: None,
+                    intensity: Some(cell.intensity),
+                    radios: Vec::new(),
+                },
+                mission: MissionConfig::default(),
+                behavior: BehaviorRuntime::for_playbook("hold"),
+            }));
+        }
         let mut network: Box<dyn NetworkBackend> = match config.simulation.network_backend.as_str()
         {
             "sigforge" => Box::new(SigForgeBackend::new(&config.simulation.sigforge_url)),
@@ -72,7 +119,7 @@ impl Simulation {
         let entities: Vec<_> = agents.iter().map(|agent| agent.entity.clone()).collect();
         let gateway_entity_id = entities
             .iter()
-            .find(|entity| entity.kind == EntityKind::GroundStation)
+            .find(|entity| entity.kind == EntityKind::Base)
             .or_else(|| entities.first())
             .map(|entity| entity.id.clone())
             .ok_or_else(|| anyhow::anyhow!("scenario requires at least one node"))?;
@@ -84,6 +131,16 @@ impl Simulation {
             &config.scenario.name,
             config.simulation.tick_hz,
         );
+        let mut wildfire = config
+            .wildfire
+            .as_ref()
+            .map(|wildfire| WildfireRuntime::new(wildfire, config.scenario.seed, &entities))
+            .transpose()?;
+        if let Some(runtime) = &mut wildfire {
+            for agent in &mut agents {
+                runtime.initialize_entity(&mut agent.entity);
+            }
+        }
 
         Ok(Self {
             scenario_name: config.scenario.name.clone(),
@@ -100,6 +157,7 @@ impl Simulation {
                 .round()
                 .max(1.0) as u64,
             cot_stale_after_s: config.cot.stale_after_s,
+            wildfire,
         })
     }
 
@@ -122,15 +180,71 @@ impl Simulation {
             .iter()
             .map(|agent| (agent.entity.id.clone(), agent.entity.position))
             .collect();
-        for agent in &mut self.agents {
-            agent.behavior.tick(
-                &mut agent.entity,
-                &agent.mission,
-                dt_s,
-                self.sim_time_s,
-                &positions,
-                &self.previous_links,
-            );
+        if let Some(wildfire) = &mut self.wildfire {
+            let entities: Vec<_> = self
+                .agents
+                .iter()
+                .map(|agent| agent.entity.clone())
+                .collect();
+            let wildfire_tick = wildfire.tick(&entities, dt_s, self.sim_time_s);
+            for update in wildfire_tick.entity_updates {
+                if let Some(agent) = self
+                    .agents
+                    .iter_mut()
+                    .find(|agent| agent.entity.id == update.entity_id)
+                {
+                    agent.entity.position = update.position;
+                    agent.entity.kinematics = update.kinematics;
+                    agent.entity.heading_deg = update.kinematics.heading_deg;
+                    agent.entity.mission_state = update.mission_state.clone();
+                    agent.entity.mission.active_node = update.mission_state;
+                    agent.entity.retardant_pct = Some(update.retardant_pct);
+                }
+            }
+            for cell in wildfire.fire_cells() {
+                if let Some(agent) = self
+                    .agents
+                    .iter_mut()
+                    .find(|agent| agent.entity.id == cell.id)
+                {
+                    agent.entity.intensity = Some(cell.intensity);
+                    agent.entity.mission_state = cell.status;
+                }
+            }
+            for document in wildfire_tick.coordination_documents {
+                self.ditto.upsert_document(
+                    document.collection,
+                    &document.document_id,
+                    &document.author_entity_id,
+                    document.value,
+                    self.sim_time_s,
+                );
+            }
+            for agent in self
+                .agents
+                .iter_mut()
+                .filter(|agent| agent.mission.playbook != "firefighting")
+            {
+                agent.behavior.tick(
+                    &mut agent.entity,
+                    &agent.mission,
+                    dt_s,
+                    self.sim_time_s,
+                    &positions,
+                    &self.previous_links,
+                );
+            }
+        } else {
+            for agent in &mut self.agents {
+                agent.behavior.tick(
+                    &mut agent.entity,
+                    &agent.mission,
+                    dt_s,
+                    self.sim_time_s,
+                    &positions,
+                    &self.previous_links,
+                );
+            }
         }
         self.sequence += 1;
         self.sim_time_s += dt_s;
@@ -208,6 +322,7 @@ impl Simulation {
         StateEnvelope {
             schema: SCHEMA,
             message_type: "state",
+            scenario: self.scenario_name.clone(),
             sequence: self.sequence,
             sim_time_s: self.sim_time_s,
             payload: StatePayload {
@@ -218,9 +333,34 @@ impl Simulation {
                 ditto_peers: ditto.peers,
                 ditto_documents: ditto.documents,
                 ditto_replication_events: ditto.replication_events,
+                fire_cells: self
+                    .wildfire
+                    .as_ref()
+                    .map(WildfireRuntime::fire_cells)
+                    .unwrap_or_default(),
+                base: self.wildfire.as_ref().map(WildfireRuntime::base_state),
                 czml,
             },
         }
+    }
+}
+
+fn default_mission_role(kind: EntityKind) -> &'static str {
+    match kind {
+        EntityKind::Uas => "scout",
+        EntityKind::AirTanker => "tanker",
+        EntityKind::Rotary => "aviation_support",
+        EntityKind::Person => "observer",
+        EntityKind::GroundVehicle => "relay",
+        EntityKind::Base => "c2_gateway",
+        EntityKind::Fire => "fire_cell",
+        EntityKind::Waypoint => "navigation",
+        EntityKind::ThreatUas => "simulated_threat",
+        EntityKind::RadarSensor => "detection",
+        EntityKind::EwJammer => "electronic_protection",
+        EntityKind::Interceptor => "defensive_interceptor",
+        EntityKind::GunSystem => "defensive_system",
+        EntityKind::ProtectedSite => "protected_site",
     }
 }
 
@@ -230,7 +370,9 @@ mod tests {
     use crate::network::LinkStatus;
     use crate::{
         model::{Domain, EntityKind, LinkType, Radio},
-        scenario::{ApiConfig, CotConfig, NodeConfig, ScenarioMetadata, SimulationConfig},
+        scenario::{
+            ApiConfig, CotConfig, NodeConfig, ScenarioBuilder, ScenarioMetadata, SimulationConfig,
+        },
     };
 
     fn config() -> ScenarioConfig {
@@ -246,6 +388,7 @@ mod tests {
                 description: String::new(),
                 seed: 42,
                 realtime: true,
+                builder: ScenarioBuilder::Standard,
             },
             simulation: SimulationConfig {
                 tick_hz: 5.0,
@@ -254,20 +397,24 @@ mod tests {
             },
             api: ApiConfig::default(),
             cot: CotConfig::default(),
+            wildfire: None,
             nodes: vec![
                 NodeConfig {
                     id: "a".into(),
                     name: "A".into(),
-                    kind: EntityKind::Drone,
+                    kind: EntityKind::Uas,
+                    affiliation: crate::model::Affiliation::Friendly,
                     domain: Domain::Air,
                     position: Position::default(),
                     radios: vec![radio.clone()],
                     mission: MissionConfig::default(),
+                    mission_role: "scout".into(),
                 },
                 NodeConfig {
                     id: "b".into(),
                     name: "B".into(),
-                    kind: EntityKind::GroundStation,
+                    kind: EntityKind::Base,
+                    affiliation: crate::model::Affiliation::Friendly,
                     domain: Domain::Ground,
                     position: Position {
                         lon_deg: 0.001,
@@ -275,6 +422,7 @@ mod tests {
                     },
                     radios: vec![radio],
                     mission: MissionConfig::default(),
+                    mission_role: "c2_gateway".into(),
                 },
             ],
         }

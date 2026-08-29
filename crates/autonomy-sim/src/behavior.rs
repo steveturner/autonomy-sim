@@ -127,6 +127,7 @@ impl BehaviorRuntime {
         };
         let status = root.tick(&mut context);
         context.entity.mission.status = status.into();
+        context.entity.mission_state = context.entity.mission.active_node.clone();
         status
     }
 }
@@ -283,6 +284,7 @@ impl Action {
 fn move_toward(entity: &mut Entity, target: Position, speed_mps: f64, dt_s: f64) {
     let before = entity.position;
     entity.kinematics.heading_deg = before.bearing_to(target);
+    entity.heading_deg = entity.kinematics.heading_deg;
     entity.kinematics.speed_mps = speed_mps;
     entity.kinematics.vertical_speed_mps = if dt_s > 0.0 {
         (target.alt_m - before.alt_m).clamp(-speed_mps * dt_s, speed_mps * dt_s) / dt_s
@@ -307,17 +309,32 @@ fn point_on_orbit(center: Position, radius_m: f64, sim_time_s: f64, speed_mps: f
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Domain, EntityKind, Kinematics, MissionState};
+    use crate::{
+        model::{Affiliation, Domain, EntityKind, Kinematics, MissionState},
+        symbology::{SymbolStatus, icon_hint, sidc},
+    };
 
     fn entity() -> Entity {
         Entity {
             id: "test".into(),
             name: "Test".into(),
-            kind: EntityKind::Drone,
+            kind: EntityKind::Uas,
+            affiliation: Affiliation::Friendly,
+            sidc: sidc(
+                EntityKind::Uas,
+                Affiliation::Friendly,
+                SymbolStatus::Present,
+            ),
+            icon_hint: icon_hint(EntityKind::Uas).into(),
             domain: Domain::Air,
             position: Position::default(),
             kinematics: Kinematics::default(),
             mission: MissionState::default(),
+            mission_role: "scout".into(),
+            mission_state: "holding".into(),
+            heading_deg: 0.0,
+            retardant_pct: None,
+            intensity: None,
             radios: Vec::new(),
         }
     }

@@ -3,11 +3,33 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EntityKind {
-    Drone,
+    #[serde(alias = "drone")]
+    Uas,
+    AirTanker,
+    Rotary,
     Person,
     GroundVehicle,
-    GroundStation,
-    Sensor,
+    #[serde(alias = "ground_station")]
+    Base,
+    Fire,
+    Waypoint,
+    ThreatUas,
+    #[serde(alias = "sensor")]
+    RadarSensor,
+    EwJammer,
+    Interceptor,
+    GunSystem,
+    ProtectedSite,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Affiliation {
+    #[default]
+    Friendly,
+    Hostile,
+    Neutral,
+    Unknown,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -87,6 +109,29 @@ impl Position {
             alt_m: self.alt_m + (target.alt_m - self.alt_m) * fraction,
         }
     }
+
+    pub fn moved(self, heading_deg: f64, horizontal_m: f64, vertical_m: f64) -> Self {
+        const EARTH_RADIUS_M: f64 = 6_371_000.0;
+        if horizontal_m.abs() <= f64::EPSILON {
+            return Self {
+                alt_m: self.alt_m + vertical_m,
+                ..self
+            };
+        }
+        let angular = horizontal_m / EARTH_RADIUS_M;
+        let bearing = heading_deg.to_radians();
+        let lat1 = self.lat_deg.to_radians();
+        let lon1 = self.lon_deg.to_radians();
+        let lat2 = (lat1.sin() * angular.cos() + lat1.cos() * angular.sin() * bearing.cos()).asin();
+        let lon2 = lon1
+            + (bearing.sin() * angular.sin() * lat1.cos())
+                .atan2(angular.cos() - lat1.sin() * lat2.sin());
+        Self {
+            lat_deg: lat2.to_degrees(),
+            lon_deg: lon2.to_degrees(),
+            alt_m: self.alt_m + vertical_m,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -126,10 +171,20 @@ pub struct Entity {
     pub id: String,
     pub name: String,
     pub kind: EntityKind,
+    pub affiliation: Affiliation,
+    pub sidc: String,
+    pub icon_hint: String,
     pub domain: Domain,
     pub position: Position,
     pub kinematics: Kinematics,
     pub mission: MissionState,
+    pub mission_role: String,
+    pub mission_state: String,
+    pub heading_deg: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retardant_pct: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub intensity: Option<f64>,
     #[serde(skip_serializing)]
     pub radios: Vec<Radio>,
 }
@@ -153,5 +208,18 @@ mod tests {
         let moved = start.moved_toward(end, 100.0);
         assert!((start.distance_to(moved) - 100.0).abs() < 0.5);
         assert!((start.bearing_to(end) - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn moving_on_heading_preserves_distance_and_bearing() {
+        let start = Position {
+            lat_deg: 39.2,
+            lon_deg: -121.0,
+            alt_m: 100.0,
+        };
+        let moved = start.moved(315.0, 1_000.0, 25.0);
+        assert!((start.distance_to(moved) - 1_000.3).abs() < 1.0);
+        assert!((start.bearing_to(moved) - 315.0).abs() < 0.01);
+        assert_eq!(moved.alt_m, 125.0);
     }
 }
