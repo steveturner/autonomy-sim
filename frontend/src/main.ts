@@ -3,6 +3,7 @@ import milsymbol from 'milsymbol';
 import type {
   EntityEffectState,
   EntityState,
+  FireCellState,
   HelloEnvelope,
   LinkEvent,
   LinkState,
@@ -10,6 +11,7 @@ import type {
   ScenarioSummary,
   StateEnvelope,
   TrafficState,
+  BaseState,
 } from './types';
 
 declare const Cesium: any;
@@ -101,6 +103,10 @@ const entityVisuals = new Map<string, {
   symbolKey: string;
 }>();
 const effectVisuals = new Map<string, { entity: any; visualKind: 'area' | 'ring' | 'line' }>();
+const svgEffectVisuals = new Map<string, {
+  element: SVGCircleElement | SVGLineElement;
+  spec: EffectVisualSpec;
+}>();
 const linkVisuals = new Map<string, any>();
 const svgLinkVisuals = new Map<string, {
   line: SVGLineElement; source: string; target: string; linkType: LinkType;
@@ -216,7 +222,7 @@ function updateEntities(entities: EntityState[]): void {
     entityPositions.set(entity.id, entity.position);
     const cartesian = Cesium.Cartesian3.fromDegrees(entity.position.lon_deg, entity.position.lat_deg, entity.position.alt_m);
     const symbol = symbolFor(entity);
-    const heading = -Cesium.Math.toRadians(entity.kinematics.heading_deg);
+    const heading = -Cesium.Math.toRadians(entity.heading_deg ?? entity.kinematics.heading_deg);
     const existing = entityVisuals.get(entity.id);
     if (existing) {
       existing.marker.position = cartesian;
@@ -283,7 +289,9 @@ function description(entity: EntityState): string {
     <tr><th>Affiliation</th><td>${escapeHtml(normalizedAffiliation(entity))}</td></tr>
     <tr><th>Type</th><td>${escapeHtml(entity.kind)} / ${escapeHtml(entity.domain)}</td></tr>
     <tr><th>Mission</th><td>${escapeHtml(entity.mission.playbook)}</td></tr>
+    ${entity.mission_role ? `<tr><th>Role</th><td>${escapeHtml(entity.mission_role)}</td></tr>` : ''}
     <tr><th>Active node</th><td>${escapeHtml(entity.mission_state || entity.mission.active_node)}</td></tr>
+    ${entity.retardant_pct !== undefined ? `<tr><th>Retardant</th><td>${entity.retardant_pct.toFixed(0)}%</td></tr>` : ''}
     <tr><th>Speed</th><td>${entity.kinematics.speed_mps.toFixed(1)} m/s</td></tr>
     <tr><th>Altitude</th><td>${entity.position.alt_m.toFixed(0)} m</td></tr>
   </tbody></table>`;
@@ -305,6 +313,7 @@ interface EffectVisualSpec {
   position: EntityState['position'];
   target?: EntityState['position'];
   radiusM: number;
+  pointSize?: number;
   color: any;
 }
 
@@ -331,12 +340,46 @@ function isActive(entity: EntityState, effect?: EntityEffectState): boolean {
   return entity.mission.status === 'running';
 }
 
-function collectEffectSpecs(entities: EntityState[], wireEffects: EntityEffectState[]): EffectVisualSpec[] {
+function collectEffectSpecs(
+  entities: EntityState[],
+  wireEffects: EntityEffectState[],
+  fireCells: FireCellState[],
+  base: BaseState | null,
+): EffectVisualSpec[] {
   const specs: EffectVisualSpec[] = [];
   const byEntityId = new Map(entities.map((entity) => [entity.id, entity]));
   const positionFor = (id: string | undefined, fallback?: EntityState['position']) => (
     (id && byEntityId.get(id)?.position) || fallback
   );
+
+  for (const cell of fireCells) {
+    const intensity = normalizedIntensity(cell.intensity);
+    specs.push({
+      id: `effect/fire-cell/${cell.id}`,
+      visualKind: 'area',
+      name: `FIRE CELL / ${cell.id} · ${cell.status}${cell.assigned_tanker ? ` · ${cell.assigned_tanker}` : ''}`,
+      position: cell.position,
+      radiusM: 70 + intensity * 280,
+      pointSize: 16 + intensity * 24,
+      color: Cesium.Color.lerp(
+        Cesium.Color.fromCssColorString('#fbbf24'),
+        Cesium.Color.fromCssColorString('#ef233c'),
+        intensity,
+        new Cesium.Color(),
+      ),
+    });
+  }
+
+  if (base && !byEntityId.has(base.id)) {
+    specs.push({
+      id: `effect/base/${base.id}`,
+      visualKind: 'ring',
+      name: `BASE / ${base.name} · ${base.occupied_slots.length}/${base.reload_slots} SLOTS`,
+      position: base.position,
+      radiusM: 85,
+      color: Cesium.Color.fromCssColorString('#38bdf8'),
+    });
+  }
 
   for (const entity of entities) {
     const nestedEffects = entity.effects || [];
@@ -354,6 +397,7 @@ function collectEffectSpecs(entities: EntityState[], wireEffects: EntityEffectSt
         name: `FIRE CELL / ${entity.name}`,
         position: entity.position,
         radiusM: numberValue(entity.effect_radius_m, entity.radius_m) ?? 70 + intensity * 280,
+        pointSize: 16 + intensity * 24,
         color,
       });
     }
@@ -410,6 +454,7 @@ function collectEffectSpecs(entities: EntityState[], wireEffects: EntityEffectSt
         name: effect.kind.toUpperCase(),
         position,
         radiusM: effect.radius_m ?? 70 + intensity * 280,
+        pointSize: 16 + intensity * 24,
         color: Cesium.Color.lerp(Cesium.Color.YELLOW, Cesium.Color.RED, intensity, new Cesium.Color()),
       });
     } else if (effectMatches(effect, ['jam', 'electronic_warfare', 'ew_'])) {
@@ -438,10 +483,16 @@ function collectEffectSpecs(entities: EntityState[], wireEffects: EntityEffectSt
   return specs;
 }
 
-function updateEffects(entities: EntityState[], wireEffects: EntityEffectState[] = []): void {
+function updateEffects(
+  entities: EntityState[],
+  wireEffects: EntityEffectState[] = [],
+  fireCells: FireCellState[] = [],
+  base: BaseState | null = null,
+): void {
   const active = new Set<string>();
-  for (const spec of collectEffectSpecs(entities, wireEffects)) {
+  for (const spec of collectEffectSpecs(entities, wireEffects, fireCells, base)) {
     active.add(spec.id);
+    updateEffectOverlay(spec);
     const position = Cesium.Cartesian3.fromDegrees(
       spec.position.lon_deg,
       spec.position.lat_deg,
@@ -462,6 +513,10 @@ function updateEffects(entities: EntityState[], wireEffects: EntityEffectState[]
         existing.entity.ellipse.semiMinorAxis = spec.radiusM;
         existing.entity.ellipse.material = spec.color.withAlpha(spec.visualKind === 'area' ? 0.32 : 0.06);
         existing.entity.ellipse.outlineColor = spec.color.withAlpha(0.9);
+        if (existing.entity.point && spec.pointSize) {
+          existing.entity.point.pixelSize = spec.pointSize;
+          existing.entity.point.color = spec.color.withAlpha(0.9);
+        }
       }
       continue;
     }
@@ -491,8 +546,15 @@ function updateEffects(entities: EntityState[], wireEffects: EntityEffectState[]
           material: spec.color.withAlpha(spec.visualKind === 'area' ? 0.32 : 0.06),
           outline: true,
           outlineColor: spec.color.withAlpha(0.9),
-          height: Math.max(0, spec.position.alt_m),
+          height: Math.max(0, spec.position.alt_m) + 2,
         },
+        point: spec.visualKind === 'area' ? {
+          pixelSize: spec.pointSize || 18,
+          color: spec.color.withAlpha(0.9),
+          outlineColor: Cesium.Color.WHITE.withAlpha(0.85),
+          outlineWidth: 1.5,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        } : undefined,
       });
     effectVisuals.set(spec.id, { entity: visual, visualKind: spec.visualKind });
   }
@@ -502,6 +564,83 @@ function updateEffects(entities: EntityState[], wireEffects: EntityEffectState[]
       viewer.entities.remove(visual.entity);
       effectVisuals.delete(id);
     }
+  }
+  for (const [id, visual] of svgEffectVisuals) {
+    if (!active.has(id)) {
+      visual.element.remove();
+      svgEffectVisuals.delete(id);
+    }
+  }
+}
+
+function updateEffectOverlay(spec: EffectVisualSpec): void {
+  const existing = svgEffectVisuals.get(spec.id);
+  const needsLine = spec.visualKind === 'line';
+  if (existing && (existing.element instanceof SVGLineElement) !== needsLine) {
+    existing.element.remove();
+    svgEffectVisuals.delete(spec.id);
+  }
+  const current = svgEffectVisuals.get(spec.id);
+  const element = current?.element || document.createElementNS(
+    'http://www.w3.org/2000/svg',
+    needsLine ? 'line' : 'circle',
+  );
+  const cssColor = spec.color.toCssColorString();
+  element.style.color = cssColor;
+  element.setAttribute('stroke', cssColor);
+  if (needsLine) {
+    element.setAttribute('class', 'effect-line');
+  } else {
+    element.setAttribute('class', spec.visualKind === 'area' ? 'effect-area' : 'effect-ring');
+    element.setAttribute('fill', spec.visualKind === 'area' ? cssColor : 'none');
+    element.setAttribute('fill-opacity', spec.visualKind === 'area' ? '0.22' : '0');
+  }
+  if (!current) byId<SVGSVGElement>('effectOverlay').append(element);
+  svgEffectVisuals.set(spec.id, { element, spec });
+}
+
+function screenPosition(position: EntityState['position']): any {
+  return Cesium.SceneTransforms.worldToWindowCoordinates(
+    viewer.scene,
+    Cesium.Cartesian3.fromDegrees(position.lon_deg, position.lat_deg, position.alt_m),
+  );
+}
+
+function syncEffectOverlay(): void {
+  for (const visual of svgEffectVisuals.values()) {
+    const source = screenPosition(visual.spec.position);
+    if (!source) {
+      visual.element.style.display = 'none';
+      continue;
+    }
+    if (visual.element instanceof SVGLineElement) {
+      const target = visual.spec.target && screenPosition(visual.spec.target);
+      if (!target) {
+        visual.element.style.display = 'none';
+        continue;
+      }
+      visual.element.setAttribute('x1', String(source.x));
+      visual.element.setAttribute('y1', String(source.y));
+      visual.element.setAttribute('x2', String(target.x));
+      visual.element.setAttribute('y2', String(target.y));
+    } else {
+      const metersPerLongitudeDegree = Math.max(
+        1,
+        111_320 * Math.cos(Cesium.Math.toRadians(visual.spec.position.lat_deg)),
+      );
+      const edge = screenPosition({
+        ...visual.spec.position,
+        lon_deg: visual.spec.position.lon_deg + visual.spec.radiusM / metersPerLongitudeDegree,
+      });
+      if (!edge) {
+        visual.element.style.display = 'none';
+        continue;
+      }
+      visual.element.setAttribute('cx', String(source.x));
+      visual.element.setAttribute('cy', String(source.y));
+      visual.element.setAttribute('r', String(Math.max(5, Math.hypot(edge.x - source.x, edge.y - source.y))));
+    }
+    visual.element.style.display = '';
   }
 }
 
@@ -634,9 +773,9 @@ function formatTime(seconds: number): string {
   return `${mins}:${(seconds % 60).toFixed(1).padStart(4, '0')}`;
 }
 
-function frameScenario(entities: EntityState[]): void {
-  const longitudes = entities.map((entity) => entity.position.lon_deg);
-  const latitudes = entities.map((entity) => entity.position.lat_deg);
+function frameScenario(positions: EntityState['position'][]): void {
+  const longitudes = positions.map((position) => position.lon_deg);
+  const latitudes = positions.map((position) => position.lat_deg);
   const west = Math.min(...longitudes);
   const east = Math.max(...longitudes);
   const south = Math.min(...latitudes);
@@ -663,6 +802,8 @@ function clearDynamicVisuals(): void {
   for (const visual of svgLinkVisuals.values()) visual.line.remove();
   entityVisuals.clear();
   effectVisuals.clear();
+  for (const visual of svgEffectVisuals.values()) visual.element.remove();
+  svgEffectVisuals.clear();
   linkVisuals.clear();
   svgLinkVisuals.clear();
   entityPositions.clear();
@@ -689,12 +830,21 @@ function handleMessage(value: HelloEnvelope | StateEnvelope): void {
   if (value.sequence <= lastSequence) return;
   lastSequence = value.sequence;
   updateEntities(value.payload.entities);
-  updateEffects(value.payload.entities, value.payload.effects);
+  updateEffects(
+    value.payload.entities,
+    value.payload.effects,
+    value.payload.fire_cells,
+    value.payload.base,
+  );
   updateLinks(value.payload.links, value.payload.traffic);
   updateHud(value);
   if (!hasFramed && value.payload.entities.length) {
     hasFramed = true;
-    frameScenario(value.payload.entities);
+    frameScenario([
+      ...value.payload.entities.map((entity) => entity.position),
+      ...(value.payload.fire_cells || []).map((cell) => cell.position),
+      ...(value.payload.base ? [value.payload.base.position] : []),
+    ]);
   }
 }
 
@@ -774,6 +924,7 @@ function normalizeScenario(value: unknown): ScenarioSummary | null {
     id,
     name: String(record.display_name || record.title || record.name || id),
     description: typeof record.description === 'string' ? record.description : undefined,
+    builder: typeof record.builder === 'string' ? record.builder : undefined,
     stream_url: typeof record.stream_url === 'string'
       ? record.stream_url
       : typeof record.ws_url === 'string' ? record.ws_url : undefined,
@@ -859,10 +1010,12 @@ byId<HTMLSelectElement>('scenarioSelect').addEventListener('change', (event) => 
 
 void loadScenarios().finally(connect);
 viewer.scene.postRender.addEventListener(syncLinkOverlay);
+viewer.scene.postRender.addEventListener(syncEffectOverlay);
 (window as any).autonomySim = {
   viewer,
   entityVisuals,
   effectVisuals,
+  svgEffectVisuals,
   linkVisuals,
   svgLinkVisuals,
   apiUrl: apiBaseUrl().toString(),

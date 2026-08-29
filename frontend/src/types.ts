@@ -38,6 +38,10 @@ export interface EntityState {
   affiliation?: Affiliation;
   callsign?: string;
   mission_state?: string;
+  mission_role?: string;
+  icon_hint?: string;
+  heading_deg?: number;
+  retardant_pct?: number;
   intensity?: number;
   active?: boolean;
   radius_m?: number;
@@ -46,6 +50,21 @@ export interface EntityState {
   engagement_target_id?: string;
   effects?: EntityEffectState[];
   [key: string]: unknown;
+}
+export interface FireCellState {
+  id: string;
+  position: Position;
+  intensity: number;
+  assigned_tanker?: string | null;
+  status: string;
+}
+export interface BaseState {
+  id: string;
+  name: string;
+  position: Position;
+  reload_slots: number;
+  occupied_slots: string[];
+  queue: string[];
 }
 export interface LinkState {
   id: string; source: string; target: string; link_type: LinkType; state: 'up' | 'down';
@@ -79,6 +98,8 @@ export interface StateEnvelope {
     ditto_peers: DittoPeerState[]; ditto_documents: DittoDocumentState[];
     ditto_replication_events: DittoReplicationEvent[]; czml: unknown[];
     effects?: EntityEffectState[];
+    fire_cells?: FireCellState[];
+    base?: BaseState | null;
   };
 }
 export interface HelloEnvelope {
@@ -90,5 +111,6 @@ export interface ScenarioSummary {
   id: string;
   name: string;
   description?: string;
+  builder?: string;
   stream_url?: string;
 }
