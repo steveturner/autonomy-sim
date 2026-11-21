@@ -6,11 +6,10 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use chrono::{DateTime, Duration, SecondsFormat, Utc};
-use quick_xml::escape::escape;
+use chrono::{DateTime, Utc};
 
 use crate::{
-    model::{Entity, EntityKind},
+    model::{Affiliation, Entity, EntityKind},
     scenario::CotConfig,
 };
 
@@ -111,49 +110,54 @@ pub fn sink_from_config(config: &CotConfig) -> Result<Box<dyn CotSink>> {
 }
 
 pub fn render_pli(entity: &Entity, now: DateTime<Utc>, stale_after_s: i64) -> String {
-    let timestamp = now.to_rfc3339_opts(SecondsFormat::Millis, true);
-    let stale = (now + Duration::seconds(stale_after_s.max(1)))
-        .to_rfc3339_opts(SecondsFormat::Millis, true);
-    let uid = escape(&entity.id);
-    let callsign = escape(&entity.name);
-    let playbook = escape(&entity.mission.playbook);
-    format!(
-        concat!(
-            "<event version=\"2.0\" uid=\"autonomy-sim-{uid}\" type=\"{cot_type}\" ",
-            "time=\"{timestamp}\" start=\"{timestamp}\" stale=\"{stale}\" how=\"m-g\">",
-            "<point lat=\"{lat:.7}\" lon=\"{lon:.7}\" hae=\"{alt:.1}\" ce=\"10.0\" le=\"10.0\"/>",
-            "<detail><contact callsign=\"{callsign}\"/>",
-            "<track course=\"{heading:.1}\" speed=\"{speed:.2}\"/>",
-            "<remarks>autonomy-sim ISR mission: {playbook}</remarks></detail></event>"
-        ),
-        uid = uid,
-        cot_type = cot_type(entity.kind),
-        timestamp = timestamp,
-        stale = stale,
-        lat = entity.position.lat_deg,
-        lon = entity.position.lon_deg,
-        alt = entity.position.alt_m,
-        callsign = callsign,
-        heading = entity.kinematics.heading_deg,
-        speed = entity.kinematics.speed_mps,
-        playbook = playbook,
-    )
+    let mut event = uas_cot::Event::new(
+        format!("autonomy-sim-{}", entity.id),
+        cot_type(entity.kind, entity.affiliation),
+        now.timestamp_micros().max(0) as u64,
+        stale_after_s.max(1) as u64,
+    );
+    event.point = uas_cot::Point {
+        ce: 10.0,
+        le: 10.0,
+        ..uas_cot::Point::new(
+            entity.position.lat_deg,
+            entity.position.lon_deg,
+            entity.position.alt_m,
+        )
+    };
+    event.callsign = Some(entity.name.clone());
+    event.track = Some(uas_cot::Track {
+        course: entity.kinematics.heading_deg,
+        speed: entity.kinematics.speed_mps,
+    });
+    event.remarks = Some(format!(
+        "autonomy-sim ISR mission: {}",
+        entity.mission.playbook
+    ));
+    event.to_xml()
 }
 
-fn cot_type(kind: EntityKind) -> &'static str {
-    match kind {
-        EntityKind::Uas | EntityKind::AirTanker | EntityKind::ThreatUas => "a-f-A-M-F-Q",
-        EntityKind::Rotary => "a-f-A-M-H",
-        EntityKind::Person => "a-f-G-U-C",
-        EntityKind::GroundVehicle => "a-f-G-E-V",
-        EntityKind::Base | EntityKind::ProtectedSite => "a-f-G-I",
-        EntityKind::Fire => "b-a-o-tbl",
-        EntityKind::Waypoint => "b-m-p-w",
-        EntityKind::RadarSensor => "a-f-G-E-S-R",
-        EntityKind::EwJammer => "a-f-G-U-S",
-        EntityKind::Interceptor => "a-f-A-M-F",
-        EntityKind::GunSystem => "a-f-G-E-W-D",
-    }
+fn cot_type(kind: EntityKind, affiliation: Affiliation) -> String {
+    let tail = match kind {
+        EntityKind::Uas | EntityKind::AirTanker | EntityKind::ThreatUas => "A-M-F-Q",
+        EntityKind::Rotary => "A-M-H",
+        EntityKind::Person => "G-U-C",
+        EntityKind::GroundVehicle => "G-E-V",
+        EntityKind::Base | EntityKind::ProtectedSite => "G-I",
+        EntityKind::Fire => return "b-a-o-tbl".into(),
+        EntityKind::Waypoint => return "b-m-p-w".into(),
+        EntityKind::RadarSensor => "G-E-S-R",
+        EntityKind::EwJammer => "G-U-S",
+        EntityKind::Interceptor => "A-M-F",
+        EntityKind::GunSystem => "G-E-W-D",
+    };
+    let identity = match affiliation {
+        Affiliation::Friendly => 'f',
+        Affiliation::Hostile => 'h',
+        Affiliation::Neutral => 'n',
+        Affiliation::Unknown => 'u',
+    };
+    format!("a-{identity}-{tail}")
 }
 
 #[cfg(test)]
@@ -162,7 +166,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        model::{Affiliation, Domain, Kinematics, MissionState, Position},
+        model::{Domain, Kinematics, MissionState, Position},
         symbology::{SymbolStatus, icon_hint, sidc},
     };
 
@@ -207,5 +211,25 @@ mod tests {
                 break;
             }
         }
+    }
+
+    #[test]
+    fn cot_type_carries_entity_affiliation() {
+        assert_eq!(
+            cot_type(EntityKind::ThreatUas, Affiliation::Hostile),
+            "a-h-A-M-F-Q"
+        );
+        assert_eq!(
+            cot_type(EntityKind::Uas, Affiliation::Friendly),
+            "a-f-A-M-F-Q"
+        );
+        assert_eq!(
+            cot_type(EntityKind::GroundVehicle, Affiliation::Unknown),
+            "a-u-G-E-V"
+        );
+        assert_eq!(
+            cot_type(EntityKind::Fire, Affiliation::Hostile),
+            "b-a-o-tbl"
+        );
     }
 }
